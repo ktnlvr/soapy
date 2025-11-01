@@ -2,3 +2,5 @@
 *.npy
 build/
 *.spv
+tmp/
+*.tmp

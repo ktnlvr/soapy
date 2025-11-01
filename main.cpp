@@ -18,7 +18,7 @@ int main(void) {
   }
 
   int r_cut = 50;
-  int l_max = 12;
+  int l_max = 400;
   int n_max = 2;
 
   State state = {r_cut, l_max, n_max};
@@ -27,7 +27,10 @@ int main(void) {
   auto shader = load_shader("xi_lmk.spv");
 
   auto buffer = create_buffer(state.boilerplate, buffer_size);
-  dispatch_compute(state.boilerplate, shader, buffer, l_max + 1, l_max + 1, l_max + 1);
+  {
+    ScopedTimer timer = "Computing";
+    dispatch_compute("xi_lmk", state.boilerplate, shader, buffer, l_max + 1, l_max + 1, l_max + 1);
+  }
   auto computed = read_buffer(state.boilerplate, buffer);
 
   cnpy::npy_save("xi_lmk_cpp.npy", computed);

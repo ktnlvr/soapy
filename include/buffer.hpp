@@ -53,7 +53,7 @@ auto create_buffer(Boilerplate &bp, vk::DeviceSize size) -> Buffer {
   return buf;
 }
 
-void dispatch_compute(Boilerplate &bp, const std::vector<uint32_t> &spirv,
+void dispatch_compute(const char* name, Boilerplate &bp, const std::vector<uint32_t> &spirv,
                      const Buffer &outputBuffer, uint32_t x = 1, uint32_t y = 1,
                      uint32_t z = 1) {
   // Create shader module
@@ -84,6 +84,32 @@ void dispatch_compute(Boilerplate &bp, const std::vector<uint32_t> &spirv,
   vk::PipelineLayout pipelineLayout =
       bp.device.createPipelineLayout(pipelineLayoutInfo);
 
+  const std::string cacheFilename = "pipeline_cache.tmp";
+  std::vector<uint8_t> initialCacheData;
+  {
+    std::ifstream in(cacheFilename, std::ios::binary | std::ios::ate);
+    if (in.good()) {
+      std::streamsize size = in.tellg();
+      in.seekg(0, std::ios::beg);
+      if (size > 0) {
+        initialCacheData.resize(static_cast<size_t>(size));
+        if (!in.read(reinterpret_cast<char*>(initialCacheData.data()),
+                     size)) {
+          initialCacheData.clear();
+        }
+      }
+    }
+  }
+
+  vk::PipelineCacheCreateInfo cacheCreateInfo{};
+  if (!initialCacheData.empty()) {
+    cacheCreateInfo.initialDataSize = initialCacheData.size();
+    cacheCreateInfo.pInitialData = initialCacheData.data();
+  }
+
+  vk::PipelineCache pipelineCache =
+      bp.device.createPipelineCache(cacheCreateInfo);
+
   // Compute pipeline
   vk::ComputePipelineCreateInfo pipelineInfo{};
   pipelineInfo.stage = vk::PipelineShaderStageCreateInfo{
@@ -91,7 +117,24 @@ void dispatch_compute(Boilerplate &bp, const std::vector<uint32_t> &spirv,
   pipelineInfo.layout = pipelineLayout;
 
   vk::Pipeline pipeline =
-      bp.device.createComputePipeline({}, pipelineInfo).value;
+      bp.device.createComputePipeline(pipelineCache, pipelineInfo).value;
+
+  // After pipeline creation, extract and save pipeline cache back to disk
+  try {
+    std::vector<uint8_t> cacheData = bp.device.getPipelineCacheData(pipelineCache);
+    if (!cacheData.empty()) {
+      std::ofstream out(cacheFilename, std::ios::binary | std::ios::trunc);
+      if (out.good()) {
+        out.write(reinterpret_cast<const char*>(cacheData.data()),
+                  static_cast<std::streamsize>(cacheData.size()));
+        out.close();
+      } else {
+        // If we can't write, silently continue (or throw if you prefer)
+      }
+    }
+  } catch (const std::exception &e) {
+    // Getting pipeline cache data can fail on some drivers; ignore to keep behavior robust
+  }
 
   // Descriptor pool
   vk::DescriptorPoolSize poolSize{};
@@ -158,13 +201,17 @@ void dispatch_compute(Boilerplate &bp, const std::vector<uint32_t> &spirv,
   submitInfo.commandBufferCount = 1;
   submitInfo.pCommandBuffers = &cmdBuffer;
 
-  bp.computeQueue.submit(submitInfo, {});
-  bp.computeQueue.waitIdle();
+  {
+    ScopedTimer _ = name;
+    bp.computeQueue.submit(submitInfo, {});
+    bp.computeQueue.waitIdle();
+  }
 
   // Cleanup temporary resources
   bp.device.destroyCommandPool(commandPool);
   bp.device.destroyDescriptorPool(descriptorPool);
   bp.device.destroyPipeline(pipeline);
+  bp.device.destroyPipelineCache(pipelineCache);
   bp.device.destroyPipelineLayout(pipelineLayout);
   bp.device.destroyDescriptorSetLayout(descriptorSetLayout);
   bp.device.destroyShaderModule(shaderModule);
