@@ -1,9 +1,8 @@
 run:
     python3 reference_implementation.py
-    rm -rf build
     mkdir -p build
-    cmake -B build
-    cmake --build build
+    clang++ main.cpp -I. -Iinclude/ -lvulkan cnpy.cpp  -lz -o build/main
+    ./build/main
 
 alias cs := compile-shaders
 
