@@ -1,23 +1,23 @@
-#version 450
+#version 460
 #extension GL_ARB_gpu_shader_fp64 : enable
 
 /*
-
 def xi_lmk_offset(l, m, k):
     offset_l = (l * (l + 1) * (l + 2)) // 6
     offset_m = (m * (2*l - m + 3)) // 2
     offset_k = k - m
     return offset_l + offset_m + offset_k
-
 */
 
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 layout(std430, binding = 0) buffer Output { float xi_table[]; } output_buffer;
-#extension GL_ARB_gpu_shader_fp64 : enable
+double dlog(double x) { return double(log(float(x))); }
+double dexp(double x) { return double(exp(float(x))); }
+double dsin(double x) { return double(sin(float(x))); }
 
-float gammaf(float zf) {
-    const float PI = 3.141592653589793;
-    const float p[9] = float[9](
+double gammad(double zd) {
+    const double PI = 3.1415926535897932384626433832795;
+    const double p[9] = double[9](
         0.99999999999980993,
         676.5203681218851,
         -1259.1392167224028,
@@ -29,20 +29,20 @@ float gammaf(float zf) {
         1.5056327351493116e-7
     );
 
-    bool reflect = (zf < 0.5);
-    float origZ = zf;
-    float z = reflect ? (1.0 - zf) : zf;
+    bool reflect = (zd < 0.5);
+    double origZ = zd;
+    double z = reflect ? (1.0 - zd) : zd;
     z -= 1.0;
 
-    float x = p[0];
+    double x = p[0];
     for (int i = 1; i < 9; ++i)
-        x += p[i] / (z + float(i));
+        x += p[i] / (z + double(i));
 
-    float t = z + 7.5;
-    float g = sqrt(2.0 * PI) * exp((z + 0.5) * log(t) - t) * x;
+    double t = z + 7.5;
+    double g = sqrt(2.0 * PI) * dexp((z + 0.5) * dlog(t) - t) * x;
 
     if (reflect)
-        g = PI / (sin(PI * origZ) * g);
+        g = PI / (dsin(PI * origZ) * g);
 
     return g;
 }
@@ -61,7 +61,6 @@ void main() {
     uint k = gl_GlobalInvocationID.z;
 
     if (l == 0 && m == 0 && k == 0) {
-        // a bit of a copout, but i don't know what the bug is
         output_buffer.xi_table[0] = 1.0;
         return;
     }
@@ -69,15 +68,15 @@ void main() {
     if (m > l || k < m || k > l)
         return;
 
-    float value = 0.0;
+    double value = 0.0;
     if (int(k - l) % 2 == 0) {
-        float num = gammaf((float(l + k - 1) / 2.0) + 1.0);
-        float den = gammaf(k - m + 1.0)
-                    * gammaf(l - k + 1.0)
-                    * gammaf((float(l + k - 1) / 2.0) - l + 1.0);
+        double num = gammad((double(l + k - 1) / 2.0) + 1.0);
+        double den = gammad(k - m + 1.0)
+                   * gammad(l - k + 1.0)
+                   * gammad((double(l + k - 1) / 2.0) - double(l) + 1.0);
         value = num / den;
     }
 
     int offset = xi_lmk_offset(int(l), int(m), int(k));
-    output_buffer.xi_table[offset] = value;
+    output_buffer.xi_table[offset] = float(value);  // cast down to float for storage
 }
