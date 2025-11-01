@@ -18,7 +18,7 @@ int main(void) {
   }
 
   int r_cut = 50;
-  int l_max = 400;
+  int l_max = 3;
   int n_max = 2;
 
   State state = {r_cut, l_max, n_max};
