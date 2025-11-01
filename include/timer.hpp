@@ -14,7 +14,7 @@ public:
         using namespace std::chrono;
         auto end = high_resolution_clock::now();
         auto duration = duration_cast<microseconds>(end - start_).count();
-        std::cerr << name_ << "\t" << duration << "";
+        std::cerr << name_ << "\t" << duration << "\n";
     }
 
     std::string name_;

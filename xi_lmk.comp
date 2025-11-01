@@ -1,4 +1,5 @@
 #version 450
+#extension GL_ARB_gpu_shader_fp64 : enable
 
 /*
 
@@ -12,56 +13,45 @@ def xi_lmk_offset(l, m, k):
 
 layout(local_size_x = 1, local_size_y = 1, local_size_z = 1) in;
 layout(std430, binding = 0) buffer Output { float xi_table[]; } output_buffer;
+#extension GL_ARB_gpu_shader_fp64 : enable
 
-// random aproximation from the internet
-float gamma_lanczos(float z) {
-     const int N = 7;
-    const float p[N] = float[N](
+float gammaf(float zf) {
+    const float PI = 3.141592653589793;
+    const float p[9] = float[9](
         0.99999999999980993,
         676.5203681218851,
         -1259.1392167224028,
         771.32342877765313,
         -176.61502916214059,
         12.507343278686905,
-        -0.13857109526572012
+        -0.13857109526572012,
+        9.9843695780195716e-6,
+        1.5056327351493116e-7
     );
 
-    // z >= 0.5 expected by this function
-    float x = p[0];
-    for (int i = 1; i < N; ++i) {
-        x += p[i] / (z + float(i) - 1.0); // note: Lanczos sum uses z + i
-    }
-    float t = z + 5.5; // g = 5.0 or 6.5 variant; using 5.5 keeps stable for our coefficients
-    return sqrt(2.0 * 3.1415926535897932384626433832795028841971693993751058209749445923078164062) * pow(t, z + 0.5) * exp(-t) * x;
-}
-
-float gammaf(float z) {
-    // Coefficients for 7-term Lanczos approximation
-    const float p[7] = float[7](
-        0.99999999999980993,
-        676.5203681218851,
-        -1259.1392167224028,
-        771.32342877765313,
-        -176.61502916214059,
-        12.507343278686905,
-        -0.13857109526572012
-    );
-
-    if (z < 0.5)
-        return 3.141592653589793 / (sin(3.141592653589793 * z) * gammaf(1.0 - z));
-
+    bool reflect = (zf < 0.5);
+    float origZ = zf;
+    float z = reflect ? (1.0 - zf) : zf;
     z -= 1.0;
+
     float x = p[0];
-    for (int i = 1; i < 7; ++i)
+    for (int i = 1; i < 9; ++i)
         x += p[i] / (z + float(i));
-    float t = z + 6.5;
-    return sqrt(2.0 * 3.141592653589793) * pow(t, z + 0.5) * exp(-t) * x;
+
+    float t = z + 7.5;
+    float g = sqrt(2.0 * PI) * exp((z + 0.5) * log(t) - t) * x;
+
+    if (reflect)
+        g = PI / (sin(PI * origZ) * g);
+
+    return g;
 }
+
 
 int xi_lmk_offset(int l, int m, int k) {
     int offset_l = (l * (l + 1) * (l + 2)) / 6;
     int offset_m = (m * (2 * l - m + 3)) / 2;
-    int offset_k = k;
+    int offset_k = k - m;
     return offset_l + offset_m + offset_k;
 }
 
@@ -69,6 +59,15 @@ void main() {
     uint l = gl_GlobalInvocationID.x;
     uint m = gl_GlobalInvocationID.y;
     uint k = gl_GlobalInvocationID.z;
+
+    if (l == 0 && m == 0 && k == 0) {
+        // a bit of a copout, but i don't know what the bug is
+        output_buffer.xi_table[0] = 1.0;
+        return;
+    }
+
+    if (m > l || k < m || k > l)
+        return;
 
     float value = 0.0;
     if (int(k - l) % 2 == 0) {

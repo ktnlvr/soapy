@@ -109,7 +109,7 @@ def compute_c_nlm(n,l,m,alpha_bl,beta_nbl,x_p,y_p,z_p,sigma):
 if __name__ == "__main__":
     r_cut = 50
     n_max = 2
-    l_max = 3
+    l_max = 12
 
     global xi_lmk_table
     xi_lmk_size = (l_max + 1) * (l_max + 2) * (l_max + 3) // 6

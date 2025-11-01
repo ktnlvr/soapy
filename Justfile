@@ -8,3 +8,8 @@ alias cs := compile-shaders
 
 compile-shaders:
     glslangValidator -V xi_lmk.comp -o xi_lmk.spv
+
+alias b := bench
+
+bench:
+    python3 bench.py

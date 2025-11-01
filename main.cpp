@@ -8,6 +8,7 @@
 #include "timer.hpp"
 #include "misc.hpp"
 #include "state.hpp"
+#include "buffer.hpp"
 
 int main(void) {
   {
@@ -17,10 +18,19 @@ int main(void) {
   }
 
   int r_cut = 50;
-  int l_max = 3;
+  int l_max = 12;
   int n_max = 2;
 
   State state = {r_cut, l_max, n_max};
+  auto buffer_size = sizeof(float) * (l_max + 1) * (l_max + 2) * (l_max + 3) / 6;
+
+  auto shader = load_shader("xi_lmk.spv");
+
+  auto buffer = create_buffer(state.boilerplate, buffer_size);
+  dispatch_compute(state.boilerplate, shader, buffer, l_max + 1, l_max + 1, l_max + 1);
+  auto computed = read_buffer(state.boilerplate, buffer);
+
+  cnpy::npy_save("xi_lmk_cpp.npy", computed);
 
   return 0;
 }
