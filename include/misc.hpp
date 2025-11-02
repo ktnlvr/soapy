@@ -1,18 +1,23 @@
 #include "cnpy.h"
+
 #include <cstring>
 #include <iostream>
-#include <kompute/Kompute.hpp>
 #include <memory>
 #include <numeric>
 #include <ranges>
+#include <span>
+
+auto size_from_shape(std::span<size_t> shape) {
+  return std::accumulate(shape.begin(), shape.end(), 1, std::multiplies<int>());
+}
 
 auto load_numpy_array(std::string_view str)
     -> std::pair<std::vector<float>, std::vector<size_t>> {
   cnpy::NpyArray arr = cnpy::npy_load(str.data());
   float *data = arr.data<float>();
   std::vector<size_t> shape = arr.shape;
-  auto sz =
-      std::accumulate(shape.begin(), shape.end(), 1, std::multiplies<int>());
+  auto sz = size_from_shape(shape);
+
   std::vector<float> out;
   out.resize(sz);
   std::memcpy(out.data(), data, sizeof(float) * sz);

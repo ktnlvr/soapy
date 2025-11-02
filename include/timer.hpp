@@ -6,17 +6,25 @@
 
 class ScopedTimer {
 public:
-    ScopedTimer(const char* name)
-        : name_(name),
-          start_(std::chrono::high_resolution_clock::now()) {}
+  ScopedTimer(const char *name)
+      : name_(name), start_(std::chrono::high_resolution_clock::now()),
+        done(false) {}
 
-    ~ScopedTimer() {
-        using namespace std::chrono;
-        auto end = high_resolution_clock::now();
-        auto duration = duration_cast<microseconds>(end - start_).count();
-        std::cerr << name_ << "\t" << duration << "\n";
-    }
+  ~ScopedTimer() {
+    if (!done)
+      finish();
+  }
 
-    std::string name_;
-    std::chrono::high_resolution_clock::time_point start_;
+  void finish() {
+    using namespace std::chrono;
+    auto end = high_resolution_clock::now();
+    auto duration = duration_cast<microseconds>(end - start_).count();
+    std::cerr << name_ << "\t" << duration << "\n";
+    done = true;
+  }
+
+  bool done;
+
+  std::string name_;
+  std::chrono::high_resolution_clock::time_point start_;
 };

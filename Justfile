@@ -1,7 +1,7 @@
 run:
     python3 reference_implementation.py
     mkdir -p build
-    clang++ main.cpp -I. -Iinclude/ -lvulkan cnpy.cpp  -lz -o build/main
+    clang++ main.cpp -I. -Iinclude/ -lvulkan cnpy.cpp  -lz -o build/main -std=gnu++23
     ./build/main
 
 alias cs := compile-shaders

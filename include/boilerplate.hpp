@@ -6,6 +6,8 @@
 #include <vector>
 #include <vulkan/vulkan.hpp>
 
+#include "timer.hpp"
+
 struct Boilerplate {
   vk::Instance instance;
   vk::PhysicalDevice physicalDevice;

@@ -1,5 +1,9 @@
 #pragma once
 
+#include <unordered_map>
+#include <fstream>
+#include <span>
+
 #include "boilerplate.hpp"
 
 struct Buffer {
@@ -7,8 +11,13 @@ struct Buffer {
   vk::DeviceMemory memory;
   vk::DeviceSize size;
 };
+template<typename T = void>
+auto create_buffer(Boilerplate &bp, vk::DeviceSize size, const T* data = nullptr) -> Buffer {
+  if constexpr (!std::is_void_v<T>) {
+    static_assert(std::is_trivially_copyable_v<T>,
+                  "create_buffer: T must be trivially copyable");
+  }
 
-auto create_buffer(Boilerplate &bp, vk::DeviceSize size) -> Buffer {
   Buffer buf{};
   buf.size = size;
 
@@ -30,7 +39,7 @@ auto create_buffer(Boilerplate &bp, vk::DeviceSize size) -> Buffer {
   uint32_t memTypeIndex = 0;
   bool found = false;
   for (uint32_t i = 0; i < memProps.memoryTypeCount; i++) {
-    if ((memReq.memoryTypeBits & (1 << i)) &&
+    if ((memReq.memoryTypeBits & (1u << i)) &&
         (memProps.memoryTypes[i].propertyFlags &
          (vk::MemoryPropertyFlagBits::eHostVisible |
           vk::MemoryPropertyFlagBits::eHostCoherent))) {
@@ -50,28 +59,81 @@ auto create_buffer(Boilerplate &bp, vk::DeviceSize size) -> Buffer {
   buf.memory = bp.device.allocateMemory(allocInfo);
   bp.device.bindBufferMemory(buf.buffer, buf.memory, 0);
 
+  // If user provided a pointer, copy 'size' bytes (clamped to buffer size)
+  if (data != nullptr) {
+    vk::DeviceSize copyBytes = std::min<vk::DeviceSize>(buf.size, size);
+    try {
+      void* mapped = bp.device.mapMemory(buf.memory, 0, copyBytes);
+      std::memcpy(mapped, reinterpret_cast<const void*>(data), static_cast<size_t>(copyBytes));
+      bp.device.unmapMemory(buf.memory);
+    } catch (vk::SystemError &e) {
+      if (e.code() == vk::Result::eErrorOutOfHostMemory)
+        throw std::runtime_error("Out of host memory while mapping buffer!");
+      else
+        throw;
+    }
+  }
+
   return buf;
 }
 
+
 void dispatch_compute(const char* name, Boilerplate &bp, const std::vector<uint32_t> &spirv,
-                     const Buffer &outputBuffer, uint32_t x = 1, uint32_t y = 1,
-                     uint32_t z = 1) {
+                      const std::vector<Buffer> &storageBuffers,
+                      const std::unordered_map<uint32_t, Buffer> &uniformBuffers,
+                      uint32_t x = 1, uint32_t y = 1, uint32_t z = 1) {
   // Create shader module
   vk::ShaderModuleCreateInfo moduleInfo{};
   moduleInfo.codeSize = spirv.size() * sizeof(uint32_t);
   moduleInfo.pCode = spirv.data();
   vk::ShaderModule shaderModule = bp.device.createShaderModule(moduleInfo);
 
-  // Descriptor set layout for storage buffer
-  vk::DescriptorSetLayoutBinding layoutBinding{};
-  layoutBinding.binding = 0;
-  layoutBinding.descriptorType = vk::DescriptorType::eStorageBuffer;
-  layoutBinding.descriptorCount = 1;
-  layoutBinding.stageFlags = vk::ShaderStageFlagBits::eCompute;
+  // Build descriptor set layout bindings:
+  // - storageBuffers are assigned bindings [0 .. storageBuffers.size()-1]
+  // - uniformBuffers use the user-specified binding key
+  size_t numStorage = storageBuffers.size();
+  size_t numUniforms = uniformBuffers.size();
 
+  if (numStorage == 0 && numUniforms == 0) {
+    throw std::runtime_error("dispatch_compute: no buffers or uniforms provided");
+  }
+
+  // Validate: ensure no binding collision (uniform using an already-used storage binding)
+  for (const auto &ub : uniformBuffers) {
+    uint32_t binding = ub.first;
+    if (binding < numStorage) {
+      throw std::runtime_error("dispatch_compute: uniform binding collides with storage buffer binding");
+    }
+  }
+
+  std::vector<vk::DescriptorSetLayoutBinding> layoutBindings;
+  layoutBindings.reserve(numStorage + numUniforms);
+
+  // storage buffer bindings: 0 .. numStorage-1
+  for (uint32_t i = 0; i < static_cast<uint32_t>(numStorage); ++i) {
+    vk::DescriptorSetLayoutBinding b{};
+    b.binding = i;
+    b.descriptorType = vk::DescriptorType::eStorageBuffer;
+    b.descriptorCount = 1;
+    b.stageFlags = vk::ShaderStageFlagBits::eCompute;
+    layoutBindings.push_back(b);
+  }
+
+  // uniform buffer bindings: at user-specified binding numbers
+  for (const auto &p : uniformBuffers) {
+    uint32_t binding = p.first;
+    vk::DescriptorSetLayoutBinding b{};
+    b.binding = binding;
+    b.descriptorType = vk::DescriptorType::eUniformBuffer;
+    b.descriptorCount = 1;
+    b.stageFlags = vk::ShaderStageFlagBits::eCompute;
+    layoutBindings.push_back(b);
+  }
+
+  // Create descriptor set layout
   vk::DescriptorSetLayoutCreateInfo layoutInfo{};
-  layoutInfo.bindingCount = 1;
-  layoutInfo.pBindings = &layoutBinding;
+  layoutInfo.bindingCount = static_cast<uint32_t>(layoutBindings.size());
+  layoutInfo.pBindings = layoutBindings.data();
 
   vk::DescriptorSetLayout descriptorSetLayout =
       bp.device.createDescriptorSetLayout(layoutInfo);
@@ -93,8 +155,7 @@ void dispatch_compute(const char* name, Boilerplate &bp, const std::vector<uint3
       in.seekg(0, std::ios::beg);
       if (size > 0) {
         initialCacheData.resize(static_cast<size_t>(size));
-        if (!in.read(reinterpret_cast<char*>(initialCacheData.data()),
-                     size)) {
+        if (!in.read(reinterpret_cast<char*>(initialCacheData.data()), size)) {
           initialCacheData.clear();
         }
       }
@@ -128,26 +189,35 @@ void dispatch_compute(const char* name, Boilerplate &bp, const std::vector<uint3
         out.write(reinterpret_cast<const char*>(cacheData.data()),
                   static_cast<std::streamsize>(cacheData.size()));
         out.close();
-      } else {
-        // If we can't write, silently continue (or throw if you prefer)
       }
     }
-  } catch (const std::exception &e) {
-    // Getting pipeline cache data can fail on some drivers; ignore to keep behavior robust
+  } catch (const std::exception &) {
+    // Some drivers may fail here; ignore to stay robust
   }
 
-  // Descriptor pool
-  vk::DescriptorPoolSize poolSize{};
-  poolSize.type = vk::DescriptorType::eStorageBuffer;
-  poolSize.descriptorCount = 1;
+  // Descriptor pool: prepare pool sizes for storage and uniform buffers
+  std::vector<vk::DescriptorPoolSize> poolSizes;
+  if (numStorage > 0) {
+    vk::DescriptorPoolSize s{};
+    s.type = vk::DescriptorType::eStorageBuffer;
+    s.descriptorCount = static_cast<uint32_t>(numStorage);
+    poolSizes.push_back(s);
+  }
+  if (numUniforms > 0) {
+    vk::DescriptorPoolSize u{};
+    u.type = vk::DescriptorType::eUniformBuffer;
+    u.descriptorCount = static_cast<uint32_t>(numUniforms);
+    poolSizes.push_back(u);
+  }
 
   vk::DescriptorPoolCreateInfo poolInfo{};
   poolInfo.maxSets = 1;
-  poolInfo.poolSizeCount = 1;
-  poolInfo.pPoolSizes = &poolSize;
+  poolInfo.poolSizeCount = static_cast<uint32_t>(poolSizes.size());
+  poolInfo.pPoolSizes = poolSizes.empty() ? nullptr : poolSizes.data();
 
   vk::DescriptorPool descriptorPool = bp.device.createDescriptorPool(poolInfo);
 
+  // Allocate descriptor set
   vk::DescriptorSetAllocateInfo allocInfoDS{};
   allocInfoDS.descriptorPool = descriptorPool;
   allocInfoDS.descriptorSetCount = 1;
@@ -156,21 +226,56 @@ void dispatch_compute(const char* name, Boilerplate &bp, const std::vector<uint3
   vk::DescriptorSet descriptorSet =
       bp.device.allocateDescriptorSets(allocInfoDS)[0];
 
-  // Bind buffer
-  vk::DescriptorBufferInfo bufferInfo{};
-  bufferInfo.buffer = outputBuffer.buffer;
-  bufferInfo.offset = 0;
-  bufferInfo.range = outputBuffer.size;
+  // Prepare descriptor buffer infos and write descriptors
+  // We collect buffer infos first to ensure pointer stability while creating writes.
+  std::vector<vk::DescriptorBufferInfo> bufferInfos;
+  bufferInfos.reserve(numStorage + numUniforms);
 
-  vk::WriteDescriptorSet write{};
-  write.dstSet = descriptorSet;
-  write.dstBinding = 0;
-  write.dstArrayElement = 0;
-  write.descriptorType = vk::DescriptorType::eStorageBuffer;
-  write.descriptorCount = 1;
-  write.pBufferInfo = &bufferInfo;
+  std::vector<vk::WriteDescriptorSet> writes;
+  writes.reserve(numStorage + numUniforms);
 
-  bp.device.updateDescriptorSets(write, {});
+  // storage buffers: bindings 0..N-1
+  for (uint32_t i = 0; i < static_cast<uint32_t>(numStorage); ++i) {
+    const Buffer &buf = storageBuffers[i];
+    vk::DescriptorBufferInfo bi{};
+    bi.buffer = buf.buffer;
+    bi.offset = 0;
+    bi.range = buf.size;
+    bufferInfos.push_back(bi);
+
+    vk::WriteDescriptorSet w{};
+    w.dstSet = descriptorSet;
+    w.dstBinding = i;
+    w.dstArrayElement = 0;
+    w.descriptorType = vk::DescriptorType::eStorageBuffer;
+    w.descriptorCount = 1;
+    w.pBufferInfo = &bufferInfos.back();
+    writes.push_back(w);
+  }
+
+  // uniform buffers: respect user-specified binding keys
+  for (const auto &p : uniformBuffers) {
+    uint32_t binding = p.first;
+    const Buffer &buf = p.second;
+    vk::DescriptorBufferInfo bi{};
+    bi.buffer = buf.buffer;
+    bi.offset = 0;
+    bi.range = buf.size;
+    bufferInfos.push_back(bi);
+
+    vk::WriteDescriptorSet w{};
+    w.dstSet = descriptorSet;
+    w.dstBinding = binding;
+    w.dstArrayElement = 0;
+    w.descriptorType = vk::DescriptorType::eUniformBuffer;
+    w.descriptorCount = 1;
+    // pBufferInfo points into bufferInfos; safe because bufferInfos won't be modified afterwards
+    w.pBufferInfo = &bufferInfos.back();
+    writes.push_back(w);
+  }
+
+  // Update descriptor sets
+  bp.device.updateDescriptorSets(static_cast<uint32_t>(writes.size()), writes.data(), 0, nullptr);
 
   // Command pool + buffer
   vk::CommandPoolCreateInfo cmdPoolInfo{};
@@ -216,6 +321,7 @@ void dispatch_compute(const char* name, Boilerplate &bp, const std::vector<uint3
   bp.device.destroyDescriptorSetLayout(descriptorSetLayout);
   bp.device.destroyShaderModule(shaderModule);
 }
+
 
 std::vector<float> read_buffer(Boilerplate &bp, const Buffer &buf) {
     try {
