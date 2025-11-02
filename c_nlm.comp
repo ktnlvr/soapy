@@ -1,26 +1,11 @@
 #version 450
 
-layout(std430, binding = 0) buffer AlphaBL {
-    float alpha_bl[];
-};
+layout(std430, binding = 0) buffer AlphaBL { float alpha_bl[]; };
+layout(std430, binding = 1) buffer BetaNBL  { float beta_nbl[]; };
+layout(std430, binding = 2) buffer Positions { vec4 positions[]; };
+layout(std430, binding = 3) buffer XiLmk { float xi_lmk[]; };
+layout(std430, binding = 4) buffer CNLM { vec2 c_nlm_out[]; };
 
-layout(std430, binding = 1) buffer BetaNBL {
-    float beta_nbl[];
-};
-
-layout(std430, binding = 2) buffer Positions {
-    vec4 positions[];
-};
-
-layout(std430, binding = 3) buffer XiLmk {
-    float xi_lmk[];
-};
-
-layout(std430, binding = 4) buffer CNLM {
-    vec2 c_nlm_out[];
-};
-
-// Single uniform buffer
 layout(std140, binding = 5) uniform Params {
     int n_max;
     int l_max;
@@ -29,9 +14,12 @@ layout(std140, binding = 5) uniform Params {
     float sigma;
 } params;
 
+const float PI = 3.14159265358979323846;
+const float EPS = 1e-12;
+
 float factorial(int x) {
     float f = 1.0;
-    for(int i=2; i<=x; i++) f *= float(i);
+    for (int i = 2; i <= x; ++i) f *= float(i);
     return f;
 }
 
@@ -43,61 +31,127 @@ int xi_lmk_offset(int l, int m, int k) {
 }
 
 void main() {
-    uint nn = gl_GlobalInvocationID.x;  // n index
-    uint ln = gl_GlobalInvocationID.y;  // l index
-    uint mn = gl_GlobalInvocationID.z;  // m index
+    uint uu = gl_GlobalInvocationID.x;
+    uint vv = gl_GlobalInvocationID.y;
+    uint ww = gl_GlobalInvocationID.z;
 
-    if(nn >= uint(params.n_max) || ln > uint(params.l_max) || mn > ln) {
+    int nn = int(uu);
+    int ln = int(vv);
+    int mn = int(ww);
+
+    if (nn >= params.n_max || ln > params.l_max || mn > ln) return;
+
+    // prefactor
+    float numerator = float(2 * ln + 1) * factorial(ln - mn);
+    float denominator = 4.0 * PI * factorial(ln + mn);
+    // guard factorial overflow
+    if (isinf(numerator) || isinf(denominator) || denominator == 0.0) {
+        // output 0 to avoid propagating NaN
+        int linear_idx_bad = nn * ((params.l_max + 1) * (params.l_max + 2) / 2)
+                           + (ln * (ln + 1) / 2)
+                           + mn;
+        c_nlm_out[linear_idx_bad] = vec2(0.0, 0.0);
         return;
     }
-
-    float numerator = float(2*ln + 1) * factorial(int(ln - mn));
-    float denominator = 4.0 * 3.14159265359 * factorial(int(ln + mn));
     float lambda_lm = pow(2.0, float(ln)) * sqrt(numerator / denominator);
     float prefactor = lambda_lm;
 
     vec2 c_nlm = vec2(0.0, 0.0);
+    float sign_m = ((mn & 1) == 0) ? 1.0 : -1.0;
 
-    for(int b=0; b<params.N_b; b++){
-        float ab = alpha_bl[int(ln) * params.N_b + b];
-        float bb = beta_nbl[int(ln) * params.n_max * params.N_b + int(nn) * params.N_b + b];
-        float denom = pow(sqrt(1.0 + 2.0*ab*params.sigma*params.sigma), float(2*ln + 3));
+    for (int b = 0; b < params.N_b; ++b) {
+        // flattened indexing - confirm these match host layout
+        int idx_ab = ln * params.N_b + b;
+        int idx_bb = ln * params.n_max * params.N_b + nn * params.N_b + b;
+
+        // optional: bounds-checking if you have room (can't know buffer size here)
+        float ab = alpha_bl[idx_ab];
+        float bb = beta_nbl[idx_bb];
+
+        float inner = 1.0 + 2.0 * ab * params.sigma * params.sigma;
+        if (inner <= 0.0) continue; // invalid => skip this basis function
+
+        float denom = pow(sqrt(inner), float(2 * ln + 3));
+        if (abs(denom) < EPS || isinf(denom)) continue;
         float factor_b = bb / denom;
+        if (isinf(factor_b)) continue;
 
         vec2 sum_p = vec2(0.0, 0.0);
 
-        for(int p=0; p<params.N_p; p++){
+        for (int p = 0; p < params.N_p; ++p) {
             vec3 pos = positions[p].xyz;
             float rx = pos.x;
             float ry = pos.y;
             float rz = pos.z;
 
             float rp = length(pos);
-            float exp_factor = exp(- ab * rp*rp / (1.0 + 2.0 * ab * params.sigma*params.sigma));
+            float rp_safe = max(rp, 0.0);
 
-            float rxy_mag = pow(length(pos.xy), float(mn));
-            float rxy_angle = atan(ry, rx) * float(mn);
-            vec2 xy_complex = vec2(rxy_mag * cos(rxy_angle), rxy_mag * sin(rxy_angle));
+            float exp_arg = - ab * rp * rp / (1.0 + 2.0 * ab * params.sigma * params.sigma);
+            float exp_factor = exp(exp_arg);
+
+            // (rx + i ry)^m
+            float rxy = length(pos.xy);
+            float rxy_mag = (rxy > 0.0 || mn == 0) ? pow(rxy, float(mn)) : 0.0;
+            float rxy_ang = atan(ry, rx) * float(mn);
+            vec2 xy_complex = vec2(rxy_mag * cos(rxy_ang), rxy_mag * sin(rxy_ang));
 
             float rp_l_minus_m = (rp != 0.0) ? pow(rp, float(ln - mn)) : 0.0;
 
             float sum_k = 0.0;
-            for(int k=int(mn); k<=int(ln); k++){
-                float xi_val = xi_lmk[xi_lmk_offset(int(ln), int(mn), k)];
-                float term_k = pow(rz, float(k - mn)) * pow(rp, float(mn - k));
+            for (int k = mn; k <= ln; ++k) {
+                int exp_rz = k - mn;      // >= 0
+                int exp_rp = mn - k;      // may be negative
+
+                float xi_val = xi_lmk[xi_lmk_offset(ln, mn, k)];
+                if (isinf(xi_val)) continue; // skip invalid table entries
+
+                // rz^(k-m)
+                float pow_rz = (exp_rz == 0) ? 1.0 : pow(rz, float(exp_rz));
+
+                // rp^(m-k) with safe handling of negative exponent and zero rp
+                float pow_rp;
+                if (exp_rp == 0) {
+                    pow_rp = 1.0;
+                } else if (exp_rp > 0) {
+                    pow_rp = pow(rp_safe, float(exp_rp));
+                } else { // negative exponent => 1 / rp^(k-m)
+                    int posExp = -exp_rp;
+                    // if rp is zero (or tiny) this would be infinite; skip that k-term
+                    if (rp <= EPS) continue;
+                    pow_rp = 1.0 / pow(rp_safe, float(posExp));
+                }
+
+                float term_k = pow_rz * pow_rp;
+                if (isinf(term_k)) continue;
                 sum_k += xi_val * term_k;
             }
 
+            if (isinf(sum_k)) sum_k = 0.0;
+
             vec2 term = xy_complex * (exp_factor * rp_l_minus_m * sum_k);
-            sum_p += term;
+            // guard per-term NaN/Inf
+            if (!isnan(term.x) && !isnan(term.y) && !isinf(term.x) && !isinf(term.y)) {
+                sum_p += term;
+            }
+        } // end p loop
+
+        if (!isnan(sum_p.x) && !isnan(sum_p.y) && !isinf(sum_p.x) && !isinf(sum_p.y)) {
+            c_nlm += sum_p * factor_b * sign_m;
         }
+    } // end b loop
 
-        c_nlm += sum_p * factor_b * pow(-1.0, float(mn));
-    }
-
-    float factor_final = prefactor * pow(2.0*params.sigma*params.sigma*3.14159265359, 1.5);
+    float factor_final = prefactor * pow(2.0 * params.sigma * params.sigma * PI, 1.5);
     c_nlm *= factor_final;
 
-    int linear_idx = int(nn * (params.l_max + 1) * (params.l_max + 2) / 2 + ln * (ln + 1) / 2 + mn);
+    // final NaN/Inf clamp
+    if (isinf(c_nlm.x) || isinf(c_nlm.y) || isnan(c_nlm.x) || isnan(c_nlm.y)) {
+        c_nlm = vec2(0.0, 0.0);
+    }
+
+    int linear_idx = nn * ((params.l_max + 1) * (params.l_max + 2) / 2)
+                   + (ln * (ln + 1) / 2)
+                   + mn;
+
     c_nlm_out[linear_idx] = c_nlm;
 }
