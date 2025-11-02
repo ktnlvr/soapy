@@ -1,0 +1,100 @@
+#version 450
+
+layout(std430, binding = 0) buffer AlphaBL {
+    float alpha_bl[];
+};
+
+layout(std430, binding = 1) buffer BetaNBL {
+    float beta_nbl[];
+};
+
+layout(std430, binding = 2) buffer Positions {
+    vec3 positions[];
+};
+
+layout(std430, binding = 3) buffer CNLM {
+    dvec2 c_nlm_out[];
+};
+
+layout(std430, binding = 4) buffer XiLmk {
+    float xi_lmk[];
+};
+
+uniform int n_max;
+uniform int l_max;
+uniform int N_p;
+uniform int N_b;
+uniform float sigma;
+
+float factorial(int x) {
+    float f = 1.0;
+    for(int i=2; i<=x; i++) f *= float(i);
+    return f;
+}
+
+int xi_lmk_offset(int l, int m, int k) {
+    int offset_l = (l * (l + 1) * (l + 2)) / 6;
+    int offset_m = (m * (2 * l - m + 3)) / 2;
+    int offset_k = k - m;
+    return offset_l + offset_m + offset_k;
+}
+
+void main() {
+    uint nn = gl_GlobalInvocationID.x;  // n index
+    uint ln = gl_GlobalInvocationID.y;  // l index
+    uint mn = gl_GlobalInvocationID.z;  // m index
+
+    if(nn >= uint(n_max) || ln > uint(l_max) || mn > ln) {
+        return;
+    }
+
+    float numerator = float(2*ln + 1) * factorial(int(ln - mn));
+    float denominator = 4.0 * 3.14159265359 * factorial(int(ln + mn));
+    float lambda_lm = pow(2.0, float(ln)) * sqrt(numerator / denominator);
+    float prefactor = lambda_lm;
+
+    dvec2 c_nlm = dvec2(0.0, 0.0);
+
+    for(int b=0; b<N_b; b++){
+        float ab = alpha_bl[int(ln) * N_b + b];
+        float bb = beta_nbl[int(ln) * n_max * N_b + int(nn) * N_b + b];
+        float denom = pow(sqrt(1.0 + 2.0*ab*sigma*sigma), float(2*ln + 3));
+        float factor_b = bb / denom;
+
+        dvec2 sum_p = dvec2(0.0, 0.0);
+
+        for(int p=0; p<N_p; p++){
+            vec3 pos = positions[p];
+            float rx = pos.x;
+            float ry = pos.y;
+            float rz = pos.z;
+
+            float rp = length(pos);
+            float exp_factor = exp(- ab * rp*rp / (1.0 + 2.0 * ab * sigma*sigma));
+
+            float rxy_mag = pow(length(pos.xy), float(mn));
+            float rxy_angle = atan(ry, rx) * float(mn);
+            dvec2 xy_complex = dvec2(rxy_mag * cos(rxy_angle), rxy_mag * sin(rxy_angle));
+
+            float rp_l_minus_m = (rp != 0.0) ? pow(rp, float(ln - mn)) : 0.0;
+
+            float sum_k = 0.0;
+            for(int k=int(mn); k<=int(ln); k++){
+                float xi_val = xi_lmk[xi_lmk_offset(int(ln), int(mn), k)];
+                float term_k = pow(rz, float(k - mn)) * pow(rp, float(mn - k));
+                sum_k += xi_val * term_k;
+            }
+
+            dvec2 term = xy_complex * (exp_factor * rp_l_minus_m * sum_k);
+            sum_p += term;
+        }
+
+        c_nlm += sum_p * factor_b * pow(-1.0, float(mn));
+    }
+
+    float factor_final = prefactor * pow(2.0*sigma*sigma*3.14159265359, 1.5);
+    c_nlm *= factor_final;
+
+    int linear_idx = int(nn * (l_max + 1) * (l_max + 2) / 2 + ln * (ln + 1) / 2 + mn);
+    c_nlm_out[linear_idx] = c_nlm;
+}

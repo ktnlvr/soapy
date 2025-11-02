@@ -137,15 +137,20 @@ if __name__ == "__main__":
     y_p = positions[:, 1]
     z_p = positions[:, 2]
     sigma = 1
-    
+
     # from here
+    c_arr = np.zeros((n_max, l_max+1, l_max+1), dtype=complex)
+
     for nn in range(n_max):
         c.append([])
-        for ln in range(l_max + 1):
+        for ln in range(l_max+1):
             c[nn].append([])
             for mn in range(ln + 1):
                 c_val = compute_c_nlm(nn, ln, mn, alpha_bl, beta_nbl, x_p, y_p, z_p, sigma)
+                c_arr[nn, ln, mn] = c_val
                 c[nn][ln].append(c_val)
+
+    np.save('c_nlm_py.npy', np.stack((c_arr.real, c_arr.imag), axis=-1))
 
     accum = 0
     for ln in range(l_max + 1):

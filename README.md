@@ -1,4 +1,6 @@
-# XI table
+# Soapy
+
+## XI table
 
 ok, so the xi_lmk seems very triangular in nature
 so there are two options: laying it out as a flat array with wasted space
@@ -15,5 +17,5 @@ which means that the total size is
 
 # Dependencies
 
-- `Kompute` for dispatching vulkan compute workloads
+- `Vulkan` for dispatching and running GPU workloads
 - `cnpy` for uploading numpy arrays
