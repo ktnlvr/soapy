@@ -8,6 +8,7 @@ alias cs := compile-shaders
 
 compile-shaders:
     glslangValidator -V xi_lmk.comp -o xi_lmk.spv
+    glslangValidator -V c_nlm.comp -o c_nlm.spv
 
 alias b := bench
 
