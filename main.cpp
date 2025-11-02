@@ -59,7 +59,7 @@ int main(void) {
   Params params = { n_max, l_max, N_p, N_b, sigma};
   Buffer params_buffer = create_buffer(state.boilerplate, sizeof(Params), &params);
 
-  auto c_nlm_buffer_size = n_max * (l_max + 1) * (l_max + 2) / 2;
+  auto c_nlm_buffer_size = 2 * sizeof(float) * n_max * (l_max + 1) * (l_max + 1);
   auto c_nlm_buffer = create_buffer(state.boilerplate, c_nlm_buffer_size);
 
   timer_upload.finish();
@@ -78,10 +78,10 @@ int main(void) {
   }
 
   {
-    ScopedTimer timer = "Computing c_nlm_out";
+    ScopedTimer timer = "Computing c_nlm";
     std::vector<Buffer> buffers = {alpha_bl_buffer, beta_bl_buffer, positions_buffer, xi_lmk_buffer, c_nlm_buffer};
     std::unordered_map<uint32_t, Buffer> uniforms = {{5, params_buffer}};
-    dispatch_compute("c_nlm_out", state.boilerplate, c_nlm_shader, buffers, uniforms,
+    dispatch_compute("c_nlm", state.boilerplate, c_nlm_shader, buffers, uniforms,
                      n_max, l_max + 1, l_max + 1);
   }
 
@@ -93,7 +93,8 @@ int main(void) {
   ScopedTimer timer_download_c_nlm_buffer = "Downloading the xi_lmk";
   auto computed_timer_download_c_nlm_buffer = read_buffer(state.boilerplate, c_nlm_buffer);
   timer_download_c_nlm_buffer.finish();
-  cnpy::npy_save("c_nlm_cpp.npy", computed_timer_download_c_nlm_buffer);
+  std::vector<size_t> c_nlm_shape = {(size_t)n_max, (size_t)l_max + 1, (size_t)l_max + 1, 2};
+  cnpy::npy_save("c_nlm_cpp.npy", computed_timer_download_c_nlm_buffer.data(), c_nlm_shape);
 
   return 0;
 }
