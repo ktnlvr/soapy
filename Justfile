@@ -1,7 +1,14 @@
-run:
+default:
+    just --list
+
+run-py:
     python3 reference_implementation.py
+
+comp-cpp:
     mkdir -p build
     clang++ main.cpp -I. -Iinclude/ -lvulkan cnpy.cpp  -lz -o build/main -std=gnu++23
+    
+run-cpp:
     ./build/main
 
 alias cs := compile-shaders

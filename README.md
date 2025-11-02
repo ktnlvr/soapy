@@ -1,5 +1,19 @@
 # Soapy
 
+## Running
+
+Install Vulkan for your platform. Run `vulkaninfo` to check if Vulkan is installed correctly.
+
+Install [just](https://github.com/casey/just).
+
+Run `just cs && just run-py && just comp-cpp && just run-cpp && just b`.
+
+- `just cs`. Compile shaders.
+- `just run-py`. Run the Python reference implementation.
+- `just comp-cpp`. Compile the C++ implementation w/ Vulkan.
+- `just run-cpp`. Run the C++ version.
+- `just b`. Compare the outputs from the versions.
+
 ## XI table
 
 ok, so the xi_lmk seems very triangular in nature
