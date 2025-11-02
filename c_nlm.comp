@@ -12,12 +12,12 @@ layout(std430, binding = 2) buffer Positions {
     vec3 positions[];
 };
 
-layout(std430, binding = 3) buffer CNLM {
-    dvec2 c_nlm_out[];
+layout(std430, binding = 3) buffer XiLmk {
+    float xi_lmk[];
 };
 
-layout(std430, binding = 4) buffer XiLmk {
-    float xi_lmk[];
+layout(std430, binding = 4) buffer CNLM {
+    vec2 c_nlm_out[];
 };
 
 uniform int n_max;
@@ -53,7 +53,7 @@ void main() {
     float lambda_lm = pow(2.0, float(ln)) * sqrt(numerator / denominator);
     float prefactor = lambda_lm;
 
-    dvec2 c_nlm = dvec2(0.0, 0.0);
+    vec2 c_nlm = vec2(0.0, 0.0);
 
     for(int b=0; b<N_b; b++){
         float ab = alpha_bl[int(ln) * N_b + b];
@@ -61,7 +61,7 @@ void main() {
         float denom = pow(sqrt(1.0 + 2.0*ab*sigma*sigma), float(2*ln + 3));
         float factor_b = bb / denom;
 
-        dvec2 sum_p = dvec2(0.0, 0.0);
+        vec2 sum_p = vec2(0.0, 0.0);
 
         for(int p=0; p<N_p; p++){
             vec3 pos = positions[p];
@@ -74,7 +74,7 @@ void main() {
 
             float rxy_mag = pow(length(pos.xy), float(mn));
             float rxy_angle = atan(ry, rx) * float(mn);
-            dvec2 xy_complex = dvec2(rxy_mag * cos(rxy_angle), rxy_mag * sin(rxy_angle));
+            vec2 xy_complex = vec2(rxy_mag * cos(rxy_angle), rxy_mag * sin(rxy_angle));
 
             float rp_l_minus_m = (rp != 0.0) ? pow(rp, float(ln - mn)) : 0.0;
 
@@ -85,7 +85,7 @@ void main() {
                 sum_k += xi_val * term_k;
             }
 
-            dvec2 term = xy_complex * (exp_factor * rp_l_minus_m * sum_k);
+            vec2 term = xy_complex * (exp_factor * rp_l_minus_m * sum_k);
             sum_p += term;
         }
 
