@@ -9,7 +9,7 @@ layout(std430, binding = 1) buffer BetaNBL {
 };
 
 layout(std430, binding = 2) buffer Positions {
-    vec3 positions[];
+    vec4 positions[];
 };
 
 layout(std430, binding = 3) buffer XiLmk {
@@ -64,7 +64,7 @@ void main() {
         vec2 sum_p = vec2(0.0, 0.0);
 
         for(int p=0; p<N_p; p++){
-            vec3 pos = positions[p];
+            vec3 pos = positions[p].xyz;
             float rx = pos.x;
             float ry = pos.y;
             float rz = pos.z;

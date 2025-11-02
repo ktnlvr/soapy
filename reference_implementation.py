@@ -136,6 +136,10 @@ if __name__ == "__main__":
     x_p = positions[:, 0]
     y_p = positions[:, 1]
     z_p = positions[:, 2]
+
+    np.save("positions_py.npy", np.hstack((positions, atoms.numbers[:, np.newaxis])))
+    print(np.hstack((positions, atoms.numbers[:, np.newaxis])))
+
     sigma = 1
 
     # from here

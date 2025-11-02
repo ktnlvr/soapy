@@ -5,12 +5,17 @@
 #include <numeric>
 #include <ranges>
 
+#include "atoms.hpp"
 #include "buffer.hpp"
 #include "misc.hpp"
 #include "state.hpp"
 #include "timer.hpp"
 
 int main(void) {
+  std::ifstream positions_file("random_hydrogens.xyz");
+  std::vector<float> positions = read_atoms_as_vec4(positions_file);
+  positions_file.close();
+
   ScopedTimer timer_ab = "Loading alpha/beta nbl";
   auto [alpha_bl, alpha_bl_shape] = load_numpy_array("alpha_bl.npy");
   auto [beta_bl, beta_bl_shape] = load_numpy_array("beta_nbl.npy");
@@ -36,7 +41,12 @@ int main(void) {
   auto beta_bl_buffer = create_buffer(
       state.boilerplate, size_from_shape(beta_bl_shape) * sizeof(float),
       beta_bl.data());
+  auto positions_buffer = create_buffer(state.boilerplate, sizeof(float) * positions.size(), positions.data());
   timer_upload.finish();
+  
+  std::vector<size_t> positions_arr_shape = {positions.size() / 4, 4};
+  auto positions_read_back = read_buffer(state.boilerplate, positions_buffer);
+  cnpy::npy_save("positions_cpp.npy", positions_read_back.data(), positions_arr_shape);
 
   timer_init.finish();
 
@@ -47,7 +57,9 @@ int main(void) {
                      l_max + 1, l_max + 1, l_max + 1);
   }
 
+  ScopedTimer timer_download = "Downloading the xi_lmk";
   auto computed = read_buffer(state.boilerplate, xi_lmk);
+  timer_download.finish();
   cnpy::npy_save("xi_lmk_cpp.npy", computed);
 
   return 0;
