@@ -4,3 +4,4 @@ build/
 *.spv
 tmp/
 *.tmp
+random_hydrogens.xyz

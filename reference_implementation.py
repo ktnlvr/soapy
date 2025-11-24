@@ -176,5 +176,5 @@ print("c; ", c)
 print(len(P))
 print(P)
 elapsed_time *= 1000000
-print(f"Elapsed time: {elapsed_time:.6f} milli seconds")
+print(f"Elapsed time: {elapsed_time:.6f} microseconds")
 print(P[0])
