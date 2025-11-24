@@ -33,14 +33,17 @@ def main():
     if args.skip_reference:
         implementations.pop("reference")
 
-    all_results = {name: [] for name in implementations}
+    impl_names = list(implementations.keys())
+
+    # Store mean times for plotting and final comparison matrix
+    all_results = {name: [] for name in impl_names}
 
     for p in range(1, max_power + 1):
         n_points = 10 ** p
         print(f"\n=== Generating {n_points} points (10^{p}) ===")
         subprocess.run(f"python generate.py {n_points}", shell=True, check=True)
 
-        power_results = {name: [] for name in implementations}
+        power_results = {name: [] for name in impl_names}
 
         for name, cmd in implementations.items():
             print(f"Running {name} for {trials} trials...")
@@ -49,18 +52,44 @@ def main():
                 if elapsed is not None:
                     power_results[name].append(elapsed)
 
-        # Store mean for plotting
-        for name in implementations:
-            mean_time = np.mean(power_results[name])
-            all_results[name].append(mean_time)
+        # Store mean times
+        mean_times = {name: np.mean(power_results[name]) for name in impl_names}
+        for name in impl_names:
+            all_results[name].append(mean_times[name])
 
-        # Print nice summary for this power
+        # Print summary
         print(f"\nSummary for 10^{p} points:")
-        for name in implementations:
+        for name in impl_names:
             mean = np.mean(power_results[name])
             std = np.std(power_results[name])
             print(f"{name}: mean = {mean:.2f} μs, std = {std:.2f} μs")
 
+        # ---- SPEEDUP MATRIX FOR THIS POWER ----
+        print(f"\nSpeedup matrix for 10^{p} points (values > 1 mean row is faster):")
+        print("               " + "  ".join(f"{b:>10}" for b in impl_names))
+        for a in impl_names:
+            row = []
+            for b in impl_names:
+                speedup = mean_times[b] / mean_times[a]
+                row.append(f"{speedup:10.3f}")
+            print(f"{a:>12}  " + " ".join(row))
+
+    # ---- FINAL AVERAGE SPEEDUP MATRIX OVER ALL POWERS ----
+    print("\n=== Final Average Speedup Matrix (averaged over all powers) ===")
+    final_matrix = np.zeros((len(impl_names), len(impl_names)))
+
+    for i, a in enumerate(impl_names):
+        for j, b in enumerate(impl_names):
+            # average speedup across all problem sizes
+            ratios = np.array(all_results[b]) / np.array(all_results[a])
+            final_matrix[i, j] = np.mean(ratios)
+
+    print("               " + "  ".join(f"{b:>10}" for b in impl_names))
+    for i, a in enumerate(impl_names):
+        row = " ".join(f"{final_matrix[i,j]:10.3f}" for j in range(len(impl_names)))
+        print(f"{a:>12}  {row}")
+
+    # ---- PLOT ----
     plt.figure(figsize=(10,6))
     x = np.arange(1, max_power + 1)
     for name, times in all_results.items():
