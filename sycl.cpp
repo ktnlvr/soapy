@@ -76,42 +76,43 @@ int main() {
   int n_max = 2;
   float sigma = 1.;
 
-  sycl::buffer<sycl::vec<float, 4>, 1> atoms(4);
-
   std::ifstream positions_file("random_hydrogens.xyz");
   std::vector<float> positions = read_atoms_as_vec4(positions_file);
   positions_file.close();
+
+  std::vector<sycl::vec<float, 4>> atom_vec;
+  atom_vec.reserve(positions.size() / 4);
+  for (size_t i = 0; i < positions.size(); i += 4) {
+    atom_vec.push_back(sycl::vec<float, 4>(positions[i], positions[i + 1],
+                                           positions[i + 2], positions[i + 3]));
+  }
+
+  sycl::buffer<sycl::vec<float, 4>, 1> atoms(atom_vec.data(), atom_vec.size());
 
   ScopedTimer timer_ab = "Loading alpha/beta nbl";
   auto [alpha_bl_vec, alpha_bl_shape] = load_numpy_array("alpha_bl.npy");
   auto [beta_bl_vec, beta_bl_shape] = load_numpy_array("beta_nbl.npy");
   timer_ab.finish();
 
-  sycl::buffer<float, 2> alpha_bl_buf{
+  sycl::buffer<double, 2> alpha_bl_buf{
       sycl::range<2>(alpha_bl_shape[0], alpha_bl_shape[1])};
-  sycl::buffer<float, 3> beta_bl_buf{
-      sycl::range<3>(beta_bl_shape[0], beta_bl_shape[1], beta_bl_shape[2])};
-
   {
-    sycl::host_accessor alpha_bl_acc(alpha_bl_buf, sycl::write_only);
-    int row = alpha_bl_shape[0];
-    int col = alpha_bl_shape[1];
-    for (int r = 0; r < row; ++r)
-      for (int c = 0; c < col; ++c)
-        alpha_bl_acc[sycl::id<2>(r, c)] = alpha_bl_vec[r * col + c];
+    auto acc = alpha_bl_buf.get_access<sycl::access::mode::write>();
+    for (size_t i = 0; i < alpha_bl_shape[0]; ++i)
+      for (size_t j = 0; j < alpha_bl_shape[1]; ++j)
+        acc[i][j] =
+            alpha_bl_vec[i * alpha_bl_shape[1] + j]; // C-order flattening
   }
 
+  sycl::buffer<double, 3> beta_bl_buf{
+      sycl::range<3>(beta_bl_shape[0], beta_bl_shape[1], beta_bl_shape[2])};
   {
-    sycl::host_accessor beta_bl_acc(beta_bl_buf, sycl::write_only);
-    int row = beta_bl_shape[0];
-    int col = beta_bl_shape[1];
-    int aisle = beta_bl_shape[2];
-    for (int r = 0; r < row; ++r)
-      for (int c = 0; c < col; ++c)
-        for (int a = 0; a < aisle; ++a) {
-          int idx = r * (col * aisle) + c * aisle + a;
-          beta_bl_acc[sycl::id<3>(r, c, a)] = beta_bl_vec[idx];
-        }
+    auto acc = beta_bl_buf.get_access<sycl::access::mode::write>();
+    for (size_t n = 0; n < beta_bl_shape[0]; ++n)
+      for (size_t l = 0; l < beta_bl_shape[1]; ++l)
+        for (size_t b = 0; b < beta_bl_shape[2]; ++b)
+          acc[n][l][b] = beta_bl_vec[n * beta_bl_shape[1] * beta_bl_shape[2] +
+                                     l * beta_bl_shape[2] + b];
   }
 
   size_t XI_L = l_max + 1;
@@ -131,15 +132,15 @@ int main() {
       if (m > l || k < m || k > l)
         return;
 
-      float value = 0.0f;
+      double value = 0.0;
       if (l == 0 && m == 0 && k == 0) {
-        value = 1.0f;
+        value = 1.0;
       } else if ((k - l) % 2 == 0) {
         double num = std::tgamma((double(l) + double(k) - 1) / 2.0 + 1.0);
         double den =
             std::tgamma(k - m + 1.0) * std::tgamma(l - k + 1.0) *
             std::tgamma((double(l) + double(k) - 1) / 2.0 - double(l) + 1.0);
-        value = float(num / den);
+        value = num / den;
       }
 
       int offset = xi_lmk_offset(l, m, k);
@@ -162,6 +163,8 @@ int main() {
   ScopedTimer timer_c_nlm = "Computing c_nlm";
   queue
       .submit([&](sycl::handler &cgh) {
+        sycl::stream out(4096, 256, cgh);
+
         auto alpha_acc = alpha_bl_buf.get_access<sycl::access::mode::read>(cgh);
         auto beta_acc = beta_bl_buf.get_access<sycl::access::mode::read>(cgh);
         auto ps_acc = atoms.get_access<sycl::access::mode::read>(cgh);
@@ -212,10 +215,14 @@ int main() {
               double sum_k = 0.0;
               for (int k = m; k <= l; ++k) {
                 double xi_val = xi_acc[xi_lmk_offset(l, m, k)];
-                double term_k = std::pow(rz, k - m);
-                if (m != k)
-                  term_k *= std::pow(rp, m - k); // avoid 0^0
-                sum_k += xi_val * term_k;
+                double term_k;
+                if (rp == 0.0 && m != k) {
+                  term_k = 0.0;
+                } else {
+                  term_k = std::pow(rz, k - m);
+                  if (m != k)
+                    term_k *= std::pow(rp, m - k);
+                }
               }
 
               sum_p_total += exp_factor * xy_complex * rp_l_minus_m * sum_k;
@@ -224,10 +231,10 @@ int main() {
             c_val_total += factor_b * sum_p_total * ((m & 1) ? -1.0 : 1.0);
           }
 
-          // Lambda prefactor
           double numerator = (2.0 * l + 1.0) * std::tgamma(l - m + 1);
           double denominator = 4.0 * M_PI * std::tgamma(l + m + 1);
-          double lambda_lm = std::pow(2.0, l) * std::sqrt(numerator / denominator);
+          double lambda_lm =
+              std::pow(2.0, l) * std::sqrt(numerator / denominator);
 
           c_val_total *= lambda_lm * std::pow(2.0 * sigma * sigma * M_PI, 3);
 
@@ -237,6 +244,21 @@ int main() {
       .wait();
 
   timer_c_nlm.finish();
+
+  std::cout << "alpha_bl_buf:" << std::endl;
+  for (int l = 0; l < alpha_bl_shape[0]; ++l)
+    for (int b = 0; b < alpha_bl_shape[1]; ++b)
+      std::cout << alpha_bl_vec[l * alpha_bl_shape[1] + b] << " ";
+  std::cout << std::endl;
+
+  std::cout << "beta_bl_buf:" << std::endl;
+  for (int n = 0; n < beta_bl_shape[0]; ++n)
+    for (int l = 0; l < beta_bl_shape[1]; ++l)
+      for (int b = 0; b < beta_bl_shape[2]; ++b)
+        std::cout << beta_bl_vec[n * beta_bl_shape[1] * beta_bl_shape[2] +
+                                 l * beta_bl_shape[2] + b]
+                  << " ";
+  std::cout << std::endl;
 
   std::vector<double> c_nlm_flat(n_max * (l_max + 1) * (l_max + 1) * 2);
 

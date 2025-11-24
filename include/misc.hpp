@@ -12,16 +12,15 @@ auto size_from_shape(std::vector<size_t> shape) {
 }
 
 auto load_numpy_array(std::string_view str)
-    -> std::pair<std::vector<float>, std::vector<size_t>> {
-  cnpy::NpyArray arr = cnpy::npy_load(str.data());
-  float *data = arr.data<float>();
-  std::vector<size_t> shape = arr.shape;
-  auto sz = size_from_shape(shape);
+    -> std::pair<std::vector<double>, std::vector<size_t>> {  // <- double
+    cnpy::NpyArray arr = cnpy::npy_load(str.data());
+    double* data = arr.data<double>();                        // <- double
+    std::vector<size_t> shape = arr.shape;
+    auto sz = size_from_shape(shape);
 
-  std::vector<float> out;
-  out.resize(sz);
-  std::memcpy(out.data(), data, sizeof(float) * sz);
-  return std::make_pair(out, shape);
+    std::vector<double> out(sz);
+    std::memcpy(out.data(), data, sizeof(double) * sz);       // <- copy correct size
+    return std::make_pair(out, shape);
 }
 
 std::vector<uint32_t> load_shader(const std::string &filename) {
