@@ -10,7 +10,7 @@ run-py:
 
 comp-sycl:
     mkdir -p build
-    icpx -fsycl sycl.cpp -o build/sycl -Iinclude cnpy.cpp -lz -g
+    icpx -fsycl sycl.cpp -o build/sycl -Iinclude cnpy.cpp -lz -O3
 
 comp-cpp:
     mkdir -p build

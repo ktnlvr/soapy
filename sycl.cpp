@@ -13,13 +13,65 @@ int xi_lmk_offset(int l, int m, int k) {
 }
 
 int main() {
+  for (const auto &platform : sycl::platform::get_platforms()) {
+    std::cout << "Platform: " << platform.get_info<sycl::info::platform::name>()
+              << "\n";
+
+    for (const auto &device : platform.get_devices()) {
+      std::cout << "  Device: " << device.get_info<sycl::info::device::name>()
+                << " | Type: ";
+
+      auto type = device.get_info<sycl::info::device::device_type>();
+      switch (type) {
+      case sycl::info::device_type::cpu:
+        std::cout << "CPU";
+        break;
+      case sycl::info::device_type::gpu:
+        std::cout << "GPU";
+        break;
+      case sycl::info::device_type::accelerator:
+        std::cout << "Accelerator";
+        break;
+      default:
+        std::cout << "Other";
+      }
+
+      std::cout << "\n";
+    }
+
+    std::cout << std::endl;
+  }
+
+  sycl::queue queue;
+  auto device = queue.get_device();
+
+  // Warmup kernel
+  queue.submit([&](sycl::handler &cgh) { cgh.single_task([=]() {}); }).wait();
+
+  std::cout << "Running on: " << device.get_info<sycl::info::device::name>()
+            << " ("
+            << (device.get_info<sycl::info::device::device_type>() ==
+                        sycl::info::device_type::gpu
+                    ? "GPU"
+                : device.get_info<sycl::info::device::device_type>() ==
+                        sycl::info::device_type::cpu
+                    ? "CPU"
+                    : "Other")
+            << ")" << std::endl;
+
+  if (device.has(sycl::aspect::fp64)) {
+    std::cout << "Double precision supported\n";
+  } else {
+    std::cout << "Double precision NOT supported, exiting\n";
+    exit(-1);
+  }
+
   int r_cut = 50;
   int l_max = 3;
   int n_max = 2;
   float sigma = 1.;
 
   sycl::buffer<sycl::vec<float, 4>, 1> atoms(4);
-  sycl::queue queue;
 
   std::ifstream positions_file("random_hydrogens.xyz");
   std::vector<float> positions = read_atoms_as_vec4(positions_file);
@@ -63,7 +115,7 @@ int main() {
 
   queue.submit([&](sycl::handler &cgh) {
     auto xi_acc = xi_lmk_buf.get_access<sycl::access::mode::write>(cgh);
-
+    
     cgh.parallel_for(sycl::range<3>{XI_L, XI_L, XI_L}, [=](sycl::id<3> gid) {
       int l = gid[0];
       int m = gid[1];
