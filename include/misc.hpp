@@ -7,7 +7,7 @@
 #include <ranges>
 #include <span>
 
-auto size_from_shape(std::span<size_t> shape) {
+auto size_from_shape(std::vector<size_t> shape) {
   return std::accumulate(shape.begin(), shape.end(), 1, std::multiplies<int>());
 }
 

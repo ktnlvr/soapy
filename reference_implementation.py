@@ -168,6 +168,7 @@ if __name__ == "__main__":
                 P.append(accum)
                 accum = 0
 
+    print(xi_lmk_table.shape)
     assert not np.any(np.isnan(xi_lmk_table))
     np.save("xi_lmk_py.npy", xi_lmk_table)
 
