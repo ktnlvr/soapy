@@ -4,10 +4,8 @@ import numpy as np
 import matplotlib.pyplot as plt
 
 def run_command(command):
-    """Run a command and return the integer value from stderr."""
     try:
         result = subprocess.run(command, shell=True, capture_output=True, text=True)
-        # Assume the integer we want is the first number in stderr
         stderr_output = result.stderr.strip()
         value = int(stderr_output.split()[0])
         return value
@@ -17,56 +15,65 @@ def run_command(command):
 
 def main():
     parser = argparse.ArgumentParser(description="Benchmark different implementations")
-    parser.add_argument("power", type=int, help="Power of 10 for generate.py")
-    parser.add_argument("--trials", type=int, default=9, help="Number of trials (default 12)")
+    parser.add_argument("max_power", type=int, help="Maximum power of 10 for generate.py")
+    parser.add_argument("--trials", type=int, default=9, help="Number of trials (default 9)")
     parser.add_argument("-r", "--skip-reference", action="store_true",
-                    help="Skip running the reference implementation")
+                        help="Skip running the reference implementation")
     args = parser.parse_args()
 
-    power = args.power
+    max_power = args.max_power
     trials = args.trials
-    n_points = 10**power
-
-    print(f"Generating {n_points} points...")
-    subprocess.run(f"python3 generate.py {n_points}", shell=True, check=True)
 
     implementations = {
-        "reference_implementation.py": "python3 reference_implementation.py",
-        "soap.py": "python3 soap.py",
+        "reference": "python3 reference_implementation.py",
+        "soap": "python3 soap.py",
         "sycl": "./build/sycl"
     }
 
     if args.skip_reference:
-        implementations.pop("reference_implementation.py")
+        implementations.pop("reference")
 
-    results = {name: [] for name in implementations}
+    all_results = {name: [] for name in implementations}
 
-    # Run each implementation 'trials' times
-    for name, cmd in implementations.items():
-        print(f"Running {name} for {trials} trials...")
-        for _ in range(trials):
-            elapsed = run_command(cmd)
-            if elapsed is not None:
-                results[name].append(elapsed)
+    for p in range(1, max_power + 1):
+        n_points = 10 ** p
+        print(f"\n=== Generating {n_points} points (10^{p}) ===")
+        subprocess.run(f"python generate.py {n_points}", shell=True, check=True)
 
-    # Compute statistics
-    means = {name: np.mean(times) for name, times in results.items()}
-    stds = {name: np.std(times) for name, times in results.items()}
+        power_results = {name: [] for name in implementations}
 
-    print("\nResults (in microseconds):")
-    for name in implementations:
-        print(f"{name}: mean = {means[name]:.2f}, std = {stds[name]:.2f}")
+        for name, cmd in implementations.items():
+            print(f"Running {name} for {trials} trials...")
+            for _ in range(trials):
+                elapsed = run_command(cmd)
+                if elapsed is not None:
+                    power_results[name].append(elapsed)
 
-    # Plot results
-    labels = list(implementations.keys())
-    means_list = [means[label] for label in labels]
-    stds_list = [stds[label] for label in labels]
+        # Store mean for plotting
+        for name in implementations:
+            mean_time = np.mean(power_results[name])
+            all_results[name].append(mean_time)
 
-    plt.figure(figsize=(8,6))
-    plt.bar(labels, means_list, yerr=stds_list, capsize=5, color=['skyblue', 'salmon', 'lightgreen'])
-    plt.ylabel("Time (μs)")
-    plt.title(f"Benchmark results for 10^{power} points")
-    plt.grid(axis='y', linestyle='--', alpha=0.7)
+        # Print nice summary for this power
+        print(f"\nSummary for 10^{p} points:")
+        for name in implementations:
+            mean = np.mean(power_results[name])
+            std = np.std(power_results[name])
+            print(f"{name}: mean = {mean:.2f} μs, std = {std:.2f} μs")
+
+    plt.figure(figsize=(10,6))
+    x = np.arange(1, max_power + 1)
+    for name, times in all_results.items():
+        plt.plot(x, times, marker='o', label=name)
+
+    plt.xticks(x, [f"10^{i}" for i in x])
+    plt.xlabel("Number of points")
+    plt.ylabel("Mean execution time (μs, log scale)")
+    plt.yscale("log")
+    plt.title("Benchmark of Implementations")
+    plt.grid(True, linestyle='--', alpha=0.5, which="both")
+    plt.legend()
+    plt.tight_layout()
     plt.show()
 
 if __name__ == "__main__":
