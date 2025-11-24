@@ -15,8 +15,6 @@ int xi_lmk_offset(int l, int m, int k) {
 
 using cdouble = std::complex<double>;
 
-float xi_lmk(int l, int m, int k) { return 0; }
-
 int main() {
   for (const auto &platform : sycl::platform::get_platforms()) {
     std::cout << "Platform: " << platform.get_info<sycl::info::platform::name>()
@@ -121,6 +119,7 @@ int main() {
 
   sycl::buffer<double, 1> xi_lmk_buf{xi_lmk_size};
 
+  ScopedTimer timer_xi_lmk = "xi_lmk";
   queue.submit([&](sycl::handler &cgh) {
     auto xi_acc = xi_lmk_buf.get_access<sycl::access::mode::write>(cgh);
 
@@ -128,9 +127,11 @@ int main() {
       int l = gid[0];
       int m = gid[1];
       int k = gid[2];
+      int offset = xi_lmk_offset(l, m, k);
 
-      if (m > l || k < m || k > l)
+      if (m > l || k < m || k > l) {
         return;
+      }
 
       double value = 0.0;
       if (l == 0 && m == 0 && k == 0) {
@@ -141,12 +142,14 @@ int main() {
             std::tgamma(k - m + 1.0) * std::tgamma(l - k + 1.0) *
             std::tgamma((double(l) + double(k) - 1) / 2.0 - double(l) + 1.0);
         value = num / den;
+      } else {
+        value = 0.;
       }
 
-      int offset = xi_lmk_offset(l, m, k);
       xi_acc[offset] = value;
     });
-  });
+  }).wait();
+  timer_xi_lmk.finish();
 
   std::vector<float> xi(xi_lmk_size);
   {
@@ -163,8 +166,6 @@ int main() {
   ScopedTimer timer_c_nlm = "Computing c_nlm";
   queue
       .submit([&](sycl::handler &cgh) {
-        sycl::stream out(4096, 256, cgh);
-
         auto alpha_acc = alpha_bl_buf.get_access<sycl::access::mode::read>(cgh);
         auto beta_acc = beta_bl_buf.get_access<sycl::access::mode::read>(cgh);
         auto ps_acc = atoms.get_access<sycl::access::mode::read>(cgh);
@@ -196,34 +197,23 @@ int main() {
               double rz = ps_acc[p].z();
               double rp = std::sqrt(rx * rx + ry * ry + rz * rz);
 
+              double exponent = ab * rp * rp / (1.0 + 2.0 * ab * sigma * sigma);
               double exp_factor =
-                  std::exp(-ab * rp * rp / (1.0 + 2.0 * ab * sigma * sigma));
+                  (exponent < 700.0) ? std::exp(-exponent) : 0.0;
 
-              std::complex<double> xy_complex(rx, ry);
-              if (m != 0 || abs(rx) > std::numeric_limits<double>::epsilon() ||
-                  ry > std::numeric_limits<double>::epsilon()) {
+              std::complex<double> xy_complex(1.0, 0.0);
+              if (m != 0 || std::abs(rx) > 1e-12 || std::abs(ry) > 1e-12)
                 xy_complex = std::pow(std::complex<double>(rx, ry), m);
-              }
 
-              double rp_l_minus_m;
-              if (rp == 0.0) {
-                rp_l_minus_m = (l == m) ? 1.0 : 0.0;
-              } else {
-                rp_l_minus_m = std::pow(rp, l - m);
-              }
+              double rp_l_minus_m = (rp == 0.0) ? 0.0 : std::pow(rp, l - m);
 
               double sum_k = 0.0;
               for (int k = m; k <= l; ++k) {
                 double xi_val = xi_acc[xi_lmk_offset(l, m, k)];
-                double term_k;
-                if (rp == 0.0 && m != k) {
-                  term_k = 0.0;
-                } else {
-                  term_k = std::pow(rz, k - m);
-                  if (m != k)
-                    term_k *= std::pow(rp, m - k);
-                }
-                sum_k += xi_val * term_k; 
+                double term_k = (rp == 0.0 && m != k)
+                                    ? 0.0
+                                    : std::pow(rz, k - m) * std::pow(rp, m - k);
+                sum_k += xi_val * term_k;
               }
 
               sum_p_total += exp_factor * xy_complex * rp_l_minus_m * sum_k;
@@ -237,7 +227,8 @@ int main() {
           double lambda_lm =
               std::pow(2.0, l) * std::sqrt(numerator / denominator);
 
-          c_val_total *= lambda_lm * std::pow(2.0 * sigma * sigma * M_PI, 3);
+          c_val_total *=
+              lambda_lm * std::pow(std::sqrt(2.0 * sigma * sigma * M_PI), 3);
 
           out_acc[idx] = c_val_total;
         });
@@ -275,7 +266,6 @@ int main() {
         }
   }
 
-  // Shape for npy_save: (n_max, l_max+1, l_max+1, 2)
   std::vector<size_t> c_nlm_shape = {(size_t)n_max, (size_t)l_max + 1,
                                      (size_t)l_max + 1, 2};
 

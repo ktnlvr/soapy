@@ -172,11 +172,9 @@ if __name__ == "__main__":
     assert not np.any(np.isnan(xi_lmk_table))
     np.save("xi_lmk_py.npy", xi_lmk_table)
 
-    exit(0)
-
 print("c; ", c)
 print(len(P))
 print(P)
-start_time/1000000
-print(f"Elapsed time: {elapsed_time:.6f} seconds")
+elapsed_time *= 1000000
+print(f"Elapsed time: {elapsed_time:.6f} milli seconds")
 print(P[0])
