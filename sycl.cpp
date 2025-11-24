@@ -115,45 +115,28 @@ int main() {
 
   size_t XI_L = l_max + 1;
 
-  auto xi_lmk_size = (XI_L + 1) * (XI_L + 2) * (XI_L) / 6;
-
-  sycl::buffer<double, 1> xi_lmk_buf{xi_lmk_size};
-
   ScopedTimer timer_xi_lmk = "xi_lmk";
-  queue
-      .submit([&](sycl::handler &cgh) {
-        auto xi_acc = xi_lmk_buf.get_access<sycl::access::mode::write>(cgh);
+  auto xi_lmk_size = (XI_L + 1) * (XI_L + 2) * (XI_L) / 6;
+  std::vector<double> xi_lmk_host(xi_lmk_size, 0.0);
+  for (int l = 0; l <= l_max; ++l) {
+    for (int m = 0; m <= l; ++m) {
+      for (int k = m; k <= l; ++k) {
+        int offset = xi_lmk_offset(l, m, k);
+        if (l == 0 && m == 0 && k == 0) {
+          xi_lmk_host[offset] = 1.0;
+        } else if ((k - l) % 2 == 0) {
+          double num = std::tgamma((l + k - 1) / 2.0 + 1.0);
+          double den = std::tgamma(k - m + 1.0) * std::tgamma(l - k + 1.0) *
+                       std::tgamma((l + k - 1) / 2.0 - l + 1.0);
+          xi_lmk_host[offset] = num / den;
+        } else {
+          xi_lmk_host[offset] = 0.0;
+        }
+      }
+    }
+  }
+  sycl::buffer<double,1> xi_lmk_buf(xi_lmk_host.data(), xi_lmk_size);
 
-        cgh.parallel_for(
-            sycl::range<3>{XI_L, XI_L, XI_L}, [=](sycl::id<3> gid) {
-              int l = gid[0];
-              int m = gid[1];
-              int k = gid[2];
-              int offset = xi_lmk_offset(l, m, k);
-
-              if (m > l || k < m || k > l) {
-                return;
-              }
-
-              double value = 0.0;
-              if (l == 0 && m == 0 && k == 0) {
-                value = 1.0;
-              } else if ((k - l) % 2 == 0) {
-                double num =
-                    std::tgamma((double(l) + double(k) - 1) / 2.0 + 1.0);
-                double den = std::tgamma(k - m + 1.0) *
-                             std::tgamma(l - k + 1.0) *
-                             std::tgamma((double(l) + double(k) - 1) / 2.0 -
-                                         double(l) + 1.0);
-                value = num / den;
-              } else {
-                value = 0.;
-              }
-
-              xi_acc[offset] = value;
-            });
-      })
-      .wait();
   timer_xi_lmk.finish();
 
   std::vector<float> xi(xi_lmk_size);
