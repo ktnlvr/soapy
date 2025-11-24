@@ -23,7 +23,7 @@ run-sycl:
     ./build/sycl
 
 sycl:
-    just clean && just run-py && just comp-sycl && just run-sycl && just bench
+    python3 generate.py 100 && just clean && just run-py && just comp-sycl && just run-sycl && just bench
 
 alias cs := compile-shaders
 
