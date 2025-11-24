@@ -120,35 +120,40 @@ int main() {
   sycl::buffer<double, 1> xi_lmk_buf{xi_lmk_size};
 
   ScopedTimer timer_xi_lmk = "xi_lmk";
-  queue.submit([&](sycl::handler &cgh) {
-    auto xi_acc = xi_lmk_buf.get_access<sycl::access::mode::write>(cgh);
+  queue
+      .submit([&](sycl::handler &cgh) {
+        auto xi_acc = xi_lmk_buf.get_access<sycl::access::mode::write>(cgh);
 
-    cgh.parallel_for(sycl::range<3>{XI_L, XI_L, XI_L}, [=](sycl::id<3> gid) {
-      int l = gid[0];
-      int m = gid[1];
-      int k = gid[2];
-      int offset = xi_lmk_offset(l, m, k);
+        cgh.parallel_for(
+            sycl::range<3>{XI_L, XI_L, XI_L}, [=](sycl::id<3> gid) {
+              int l = gid[0];
+              int m = gid[1];
+              int k = gid[2];
+              int offset = xi_lmk_offset(l, m, k);
 
-      if (m > l || k < m || k > l) {
-        return;
-      }
+              if (m > l || k < m || k > l) {
+                return;
+              }
 
-      double value = 0.0;
-      if (l == 0 && m == 0 && k == 0) {
-        value = 1.0;
-      } else if ((k - l) % 2 == 0) {
-        double num = std::tgamma((double(l) + double(k) - 1) / 2.0 + 1.0);
-        double den =
-            std::tgamma(k - m + 1.0) * std::tgamma(l - k + 1.0) *
-            std::tgamma((double(l) + double(k) - 1) / 2.0 - double(l) + 1.0);
-        value = num / den;
-      } else {
-        value = 0.;
-      }
+              double value = 0.0;
+              if (l == 0 && m == 0 && k == 0) {
+                value = 1.0;
+              } else if ((k - l) % 2 == 0) {
+                double num =
+                    std::tgamma((double(l) + double(k) - 1) / 2.0 + 1.0);
+                double den = std::tgamma(k - m + 1.0) *
+                             std::tgamma(l - k + 1.0) *
+                             std::tgamma((double(l) + double(k) - 1) / 2.0 -
+                                         double(l) + 1.0);
+                value = num / den;
+              } else {
+                value = 0.;
+              }
 
-      xi_acc[offset] = value;
-    });
-  }).wait();
+              xi_acc[offset] = value;
+            });
+      })
+      .wait();
   timer_xi_lmk.finish();
 
   std::vector<float> xi(xi_lmk_size);
@@ -235,7 +240,7 @@ int main() {
       })
       .wait();
 
-  timer_c_nlm.finish();
+  std::cerr << timer_c_nlm.finish() << std::endl;
 
   std::cout << "alpha_bl_buf:" << std::endl;
   for (int l = 0; l < alpha_bl_shape[0]; ++l)

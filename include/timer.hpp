@@ -15,12 +15,13 @@ public:
       finish();
   }
 
-  void finish() {
+  long long finish() {
     using namespace std::chrono;
     auto end = high_resolution_clock::now();
     auto duration = duration_cast<microseconds>(end - start_).count();
-    std::cerr << name_ << "\t" << duration << " μs\n";
+    std::cout << name_ << "\t" << duration << " μs\n";
     done = true;
+    return duration;
   }
 
   bool done;
