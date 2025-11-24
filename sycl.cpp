@@ -17,74 +17,6 @@ using cdouble = std::complex<double>;
 
 float xi_lmk(int l, int m, int k) { return 0; }
 
-void compute_c_nlm(int n, int l, int m,
-                   sycl::buffer<sycl::vec<float, 4>, 2> &alpha_bl,
-                   sycl::buffer<sycl::vec<float, 4>, 3> &beta_nbl,
-                   sycl::buffer<sycl::vec<float, 4>, 1> &ps, float sigma,
-                   sycl::buffer<cdouble, 3> out, sycl::queue &queue) {
-  queue
-      .submit([&](sycl::handler &cgh) {
-        auto alpha_acc = alpha_bl.get_access<sycl::access::mode::read>(cgh);
-        auto beta_acc = beta_nbl.get_access<sycl::access::mode::read>(cgh);
-        auto ps_acc = ps.get_access<sycl::access::mode::read>(cgh);
-        auto out_acc = out.get_access<sycl::access::mode::discard_write>(cgh);
-
-        cgh.parallel_for(out.get_range(), [=](sycl::id<3> idx) {
-          int n = idx[0];
-          int l = idx[1];
-          int m = idx[2];
-
-          size_t N_b = alpha_acc.get_range()[1];
-          size_t N_p = ps_acc.get_range()[0];
-
-          cdouble c_val_total(0.0f, 0.0f);
-
-          for (size_t b = 0; b < N_b; ++b) {
-            double ab = alpha_acc[l][b].x();
-            double bb = beta_acc[l][n][b].x();
-            double denom =
-                std::pow(std::sqrt(1 + 2 * ab * sigma * sigma), 2 * l + 3);
-            double factor_b = bb / denom;
-
-            cdouble sum_p_total(0.0f, 0.0f);
-
-            for (size_t p = 0; p < N_p; ++p) {
-              double rx = ps_acc[p].x();
-              double ry = ps_acc[p].y();
-              double rz = ps_acc[p].z();
-              double rp = std::sqrt(rx * rx + ry * ry + rz * rz);
-
-              double exp_factor =
-                  std::exp(-ab * rp * rp / (1 + 2 * ab * sigma * sigma));
-              cdouble xy_complex(std::pow(rx, m), std::pow(ry, m));
-              double rp_l_minus_m = (rp != 0) ? std::pow(rp, l - m) : 0.0f;
-
-              double sum_k = 0.0f;
-              for (int k = m; k <= l; ++k) {
-                double xi_val = xi_lmk(l, m, k);
-                sum_k += xi_val * std::pow(rz, k - m) * std::pow(rp, m - k);
-              }
-
-              sum_p_total += exp_factor * xy_complex * rp_l_minus_m * sum_k;
-            }
-
-            c_val_total += factor_b * sum_p_total * std::pow(-1.0f, m);
-          }
-
-          double numerator = std::tgamma(l - m + 1);
-          double denominator = 4.0f * M_PI * std::tgamma(l + m + 1);
-          double lambda_lm =
-              std::pow(2.0f, l) * std::sqrt(numerator / denominator);
-
-          c_val_total *=
-              lambda_lm * std::pow(2.0f * sigma * sigma * M_PI, 1.5f);
-
-          out_acc[idx] = cdouble{c_val_total.real(), c_val_total.imag()};
-        });
-      })
-      .wait();
-}
-
 int main() {
   for (const auto &platform : sycl::platform::get_platforms()) {
     std::cout << "Platform: " << platform.get_info<sycl::info::platform::name>()
@@ -155,9 +87,9 @@ int main() {
   auto [beta_bl_vec, beta_bl_shape] = load_numpy_array("beta_nbl.npy");
   timer_ab.finish();
 
-  sycl::buffer<sycl::vec<float, 4>, 2> alpha_bl_buf{
+  sycl::buffer<float, 2> alpha_bl_buf{
       sycl::range<2>(alpha_bl_shape[0], alpha_bl_shape[1])};
-  sycl::buffer<sycl::vec<float, 4>, 3> beta_bl_buf{
+  sycl::buffer<float, 3> beta_bl_buf{
       sycl::range<3>(beta_bl_shape[0], beta_bl_shape[1], beta_bl_shape[2])};
 
   {
@@ -186,7 +118,7 @@ int main() {
 
   auto xi_lmk_size = (XI_L + 1) * (XI_L + 2) * (XI_L) / 6;
 
-  sycl::buffer<float, 1> xi_lmk_buf{xi_lmk_size};
+  sycl::buffer<double, 1> xi_lmk_buf{xi_lmk_size};
 
   queue.submit([&](sycl::handler &cgh) {
     auto xi_acc = xi_lmk_buf.get_access<sycl::access::mode::write>(cgh);
@@ -233,8 +165,8 @@ int main() {
         auto alpha_acc = alpha_bl_buf.get_access<sycl::access::mode::read>(cgh);
         auto beta_acc = beta_bl_buf.get_access<sycl::access::mode::read>(cgh);
         auto ps_acc = atoms.get_access<sycl::access::mode::read>(cgh);
-        auto out_acc = c_nlm_buf.get_access<sycl::access::mode::write>(
-            cgh); // write each element once
+        auto out_acc = c_nlm_buf.get_access<sycl::access::mode::write>(cgh);
+        auto xi_acc = xi_lmk_buf.get_access<sycl::access::mode::read>(cgh);
 
         cgh.parallel_for(c_nlm_buf.get_range(), [=](sycl::id<3> idx) {
           int n = idx[0];
@@ -244,19 +176,17 @@ int main() {
           size_t N_b = alpha_acc.get_range()[1];
           size_t N_p = ps_acc.get_range()[0];
 
-          std::complex<double> c_val_total(0.0f, 0.0f);
+          std::complex<double> c_val_total(0.0, 0.0);
 
-          // Sum over basis functions
           for (size_t b = 0; b < N_b; ++b) {
-            double ab = alpha_acc[l][b].x();
-            double bb = beta_acc[l][n][b].x();
+            double ab = alpha_acc[l][b];
+            double bb = beta_acc[l][n][b];
             double denom =
-                std::pow(std::sqrt(1 + 2 * ab * sigma * sigma), 2 * l + 3);
+                std::pow(std::sqrt(1.0 + 2.0 * ab * sigma * sigma), 2 * l + 3);
             double factor_b = bb / denom;
 
-            cdouble sum_p_total(0.0f, 0.0f);
+            std::complex<double> sum_p_total(0.0, 0.0);
 
-            // Sum over particle positions
             for (size_t p = 0; p < N_p; ++p) {
               double rx = ps_acc[p].x();
               double ry = ps_acc[p].y();
@@ -264,35 +194,48 @@ int main() {
               double rp = std::sqrt(rx * rx + ry * ry + rz * rz);
 
               double exp_factor =
-                  std::exp(-ab * rp * rp / (1 + 2 * ab * sigma * sigma));
-              cdouble xy_complex(rx, ry);
-              xy_complex = std::pow(xy_complex, m); // correct complex power
-              double rp_l_minus_m = (rp != 0) ? std::pow(rp, l - m) : 0.0f;
+                  std::exp(-ab * rp * rp / (1.0 + 2.0 * ab * sigma * sigma));
 
-              double sum_k = 0.0f;
+              std::complex<double> xy_complex(rx, ry);
+              if (m != 0 || abs(rx) > std::numeric_limits<double>::epsilon() ||
+                  ry > std::numeric_limits<double>::epsilon()) {
+                xy_complex = std::pow(std::complex<double>(rx, ry), m);
+              }
+
+              double rp_l_minus_m;
+              if (rp == 0.0) {
+                rp_l_minus_m = (l == m) ? 1.0 : 0.0;
+              } else {
+                rp_l_minus_m = std::pow(rp, l - m);
+              }
+
+              double sum_k = 0.0;
               for (int k = m; k <= l; ++k) {
-                double xi_val = xi_lmk(l, m, k); // needs actual xi
-                sum_k += xi_val * std::pow(rz, k - m) * std::pow(rp, m - k);
+                double xi_val = xi_acc[xi_lmk_offset(l, m, k)];
+                double term_k = std::pow(rz, k - m);
+                if (m != k)
+                  term_k *= std::pow(rp, m - k); // avoid 0^0
+                sum_k += xi_val * term_k;
               }
 
               sum_p_total += exp_factor * xy_complex * rp_l_minus_m * sum_k;
             }
 
-            c_val_total += factor_b * sum_p_total * std::pow(-1.0f, m);
+            c_val_total += factor_b * sum_p_total * ((m & 1) ? -1.0 : 1.0);
           }
 
-          double numerator = std::tgamma(l - m + 1);
-          double denominator = 4.0f * M_PI * std::tgamma(l + m + 1);
-          double lambda_lm =
-              std::pow(2.0f, l) * std::sqrt(numerator / denominator);
+          // Lambda prefactor
+          double numerator = (2.0 * l + 1.0) * std::tgamma(l - m + 1);
+          double denominator = 4.0 * M_PI * std::tgamma(l + m + 1);
+          double lambda_lm = std::pow(2.0, l) * std::sqrt(numerator / denominator);
 
-          c_val_total *=
-              lambda_lm * std::pow(2.0f * sigma * sigma * M_PI, 1.5f);
+          c_val_total *= lambda_lm * std::pow(2.0 * sigma * sigma * M_PI, 3);
 
-          out_acc[idx] = cdouble{c_val_total.real(), c_val_total.imag()};
+          out_acc[idx] = c_val_total;
         });
       })
       .wait();
+
   timer_c_nlm.finish();
 
   std::vector<double> c_nlm_flat(n_max * (l_max + 1) * (l_max + 1) * 2);
