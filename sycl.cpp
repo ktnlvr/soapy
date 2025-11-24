@@ -223,6 +223,7 @@ int main() {
                   if (m != k)
                     term_k *= std::pow(rp, m - k);
                 }
+                sum_k += xi_val * term_k; 
               }
 
               sum_p_total += exp_factor * xy_complex * rp_l_minus_m * sum_k;
