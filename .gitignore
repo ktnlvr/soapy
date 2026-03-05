@@ -2,3 +2,4 @@
 *.npy
 *.qdstrm
 *.nsys-rep
+__pycache__/

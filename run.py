@@ -9,6 +9,8 @@ from ase.io import read
 from scipy.special import gamma
 from scipy.linalg import sqrtm, inv
 
+from caching import cache_load_or_compute
+
 import time
 
 
@@ -188,11 +190,15 @@ def main():
     l_max = 3
     sigma = 1
 
-    xi_lmk_table = precompute_xi_lmk(l_max)
-    assert not np.any(np.isnan(xi_lmk_table))
+    xi_lmk_table = cache_load_or_compute(
+        "xi_lmk", precompute_xi_lmk, l_max
+    )
     print(f"Xi_lmk = {xi_lmk_table.shape}")
 
-    alpha_bl, beta_lnb = get_basis_gto(r_cut, n_max, l_max)
+    alpha_bl, beta_lnb = cache_load_or_compute(
+        "xi_lmk", get_basis_gto, r_cut, n_max, l_max
+    )
+
     print(f"A_bl = {alpha_bl.shape}")
     print(f"B_lnb = {beta_lnb.shape}")
 
@@ -203,20 +209,29 @@ def main():
 
     print(f"N_p = {len(positions)}")
 
-    k_nlm = precompute_K_nlm(alpha_bl, beta_lnb, sigma)
+    k_nlm = cache_load_or_compute(
+        "xi_lmk", precompute_K_nlm, alpha_bl, beta_lnb, sigma
+    )
+
     print(f"K_nlm = {k_nlm.shape}")
 
-    w_nlb = precompute_W_nlb(alpha_bl, beta_lnb, sigma)
+    w_nlb = cache_load_or_compute(
+        "W_nlb", precompute_W_nlb, alpha_bl, beta_lnb, sigma
+    )
     print(f"W_nlb = {w_nlb.shape}")
-
-    e_lb = precompute_E_lb(alpha_bl, sigma)
+    
+    e_lb = cache_load_or_compute(
+        "E_lb", precompute_E_lb, alpha_bl, sigma
+    )
     print(f"E_lb = {e_lb.shape}")
 
     R2_buffer = np.sum(positions**2, axis=1).astype(np.float32)
 
-    xi_lmk_dev   = cuda.to_device(np.ascontiguousarray(xi_lmk_table))
-    W_nlb_dev    = cuda.to_device(np.ascontiguousarray(w_nlb))
-    E_lb_dev     = cuda.to_device(np.ascontiguousarray(e_lb))
+    # Transfer to GPU
+    xi_lmk_dev = cuda.to_device(np.ascontiguousarray(xi_lmk_table))
+    W_nlb_dev  = cuda.to_device(np.ascontiguousarray(w_nlb))
+    E_lb_dev   = cuda.to_device(np.ascontiguousarray(e_lb))
+
     x_p_dev      = cuda.to_device(np.ascontiguousarray(x_p))
     y_p_dev      = cuda.to_device(np.ascontiguousarray(y_p))
     z_p_dev      = cuda.to_device(np.ascontiguousarray(z_p))
@@ -252,7 +267,7 @@ def main():
     c_partial_real = c_partial_real_dev.copy_to_host()
     c_partial_imag = c_partial_imag_dev.copy_to_host()
 
-    c_arr = k_nlm * np.sum(c_partial_real, axis=0) + 1j * np.sum(c_partial_imag, axis=0)
+    c_arr = k_nlm * (np.sum(c_partial_real, axis=0) + 1j * np.sum(c_partial_imag, axis=0))
     toc()
     cuda.profile_stop()
 
