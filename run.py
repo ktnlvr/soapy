@@ -149,46 +149,59 @@ kernel_sig = (
 )
 
 @cuda.jit(kernel_sig)
-def compute_c_nlm_kernel_partial_optimized(N_p, n_max, l_max,
-                                           K_nlm, W_nlb, E_lb, xi_lmk,
-                                           x_p, y_p, z_p,
-                                           c_partial_real, c_partial_imag):
+def compute_c_nlm_kernel(N_p, n_max, l_max,
+                         K_nlm, W_nlb, E_lb, xi_lmk,
+                         x_p, y_p, z_p,
+                         c_partial_real, c_partial_imag):
+
     tid = cuda.grid(1)
-    if tid >= N_p:
-        return
+    stride = cuda.gridsize(1)
 
-    xp = x_p[tid]
-    yp = y_p[tid]
-    zp = z_p[tid]
-    R2 = xp*xp + yp*yp + zp*zp
-    xy = np.complex64(xp + 1j*yp)
+    xy_m = np.complex64(0.0)
+    temp_sum = np.complex64(0.0)
 
-    for n in range(n_max):
-        for l in range(l_max + 1):
-            for m in range(l + 1):
-                temp_sum = np.complex64(0.0 + 0.0j)
+    for p in range(tid, N_p, stride):
 
-                xy_m = np.complex64(1.0)
-                for i in range(m):
-                    xy_m *= xy
+        xp = x_p[p]
+        yp = y_p[p]
+        zp = z_p[p]
 
-                for b in range(W_nlb.shape[2]):
-                    w = np.float32(W_nlb[n, l, b])
-                    e = np.float32(E_lb[l, b])
-                    exp_factor = math.exp(e * R2)
+        R2 = xp*xp + yp*yp + zp*zp
+        xy = np.complex64(xp + 1j*yp)
 
-                    sum_k = np.complex64(0.0 + 0.0j)
-                    for k in range(m, l + 1):
-                        xi = np.float32(xi_lmk[l, m, k])
-                        z_term = np.float32(zp ** (k - m))
-                        R_term = np.float32(R2 ** ((l - k) / 2))
-                        sum_k += np.complex64(xi * z_term * R_term)
+        for n in range(n_max):
+            for l in range(l_max + 1):
+                for m in range(l + 1):
 
-                    temp_sum += w * exp_factor * xy_m * sum_k
+                    temp_sum = np.complex64(0.0)
 
-                val = np.complex64(temp_sum * K_nlm[n, l, m])
-                c_partial_real[tid, n, l, m] = val.real
-                c_partial_imag[tid, n, l, m] = val.imag
+                    xy_m = np.complex64(1.0)
+                    for i in range(m):
+                        xy_m *= xy
+
+                    for b in range(W_nlb.shape[2]):
+
+                        w = W_nlb[n, l, b]
+                        e = E_lb[l, b]
+                        exp_factor = math.exp(e * R2)
+
+                        sum_k = np.complex64(0.0)
+
+                        for k in range(m, l + 1):
+
+                            xi = xi_lmk[l, m, k]
+
+                            z_term = zp ** (k - m)
+                            R_term = R2 ** ((l - k) * 0.5)
+
+                            sum_k += np.complex64(xi * z_term * R_term)
+
+                        temp_sum += w * exp_factor * xy_m * sum_k
+
+                    val = temp_sum * K_nlm[n, l, m]
+
+                    c_partial_real[tid, n, l, m] += val.real
+                    c_partial_imag[tid, n, l, m] += val.imag
 
 def main():
     r_cut = 50
@@ -231,20 +244,28 @@ def main():
     z_p_dev      = cuda.to_device(np.ascontiguousarray(z_p))
     R2_dev = cuda.to_device(R2_buffer)
 
-    threads_per_block = 128
-    blocks_per_grid = (N_p + threads_per_block - 1) // threads_per_block
+    device = cuda.get_current_device()
+
+    threads_per_block = 256
+    blocks_per_grid = 4 * device.MULTIPROCESSOR_COUNT
 
     num_threads = threads_per_block * blocks_per_grid
-    c_partial_real_dev = cuda.device_array((num_threads, n_max, l_max+1, l_max+1), dtype=np.float64)
-    c_partial_imag_dev = cuda.device_array((num_threads, n_max, l_max+1, l_max+1), dtype=np.float64)
+
+    c_partial_real_dev = cuda.device_array(
+        (num_threads, n_max, l_max+1, l_max+1), dtype=np.float32
+    )
+
+    c_partial_imag_dev = cuda.device_array(
+        (num_threads, n_max, l_max+1, l_max+1), dtype=np.float32
+    )
 
     cuda.profile_start()
 
-    compute_c_nlm_kernel_partial_optimized.compile(kernel_sig)
+    compute_c_nlm_kernel.compile(kernel_sig)
 
     tic()
 
-    compute_c_nlm_kernel_partial_optimized[blocks_per_grid, threads_per_block](
+    compute_c_nlm_kernel[blocks_per_grid, threads_per_block](
         N_p, n_max, l_max,
         K_nlm_dev, W_nlb_dev, E_lb_dev, xi_lmk_dev,
         x_p_dev, y_p_dev, z_p_dev,
