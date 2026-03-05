@@ -1,1 +1,4 @@
 *.xyz
+*.npy
+*.qdstrm
+*.nsys-rep

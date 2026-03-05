@@ -2,6 +2,7 @@ from numba import jit
 import numba as nb
 import math
 import numpy as np
+from numba import cuda
 
 from ase.io import read
 
@@ -11,14 +12,20 @@ from scipy.linalg import sqrtm, inv
 import time
 
 
+start_time = 0.0
+
+import time
+
+start_time = 0.0
+
 def tic():
     global start_time
     start_time = time.time()
 
 def toc():
-    global start_time, elapsed_time
-    elapsed_time += (time.time() - start_time) * 1_000_000
-    print(elapsed_time)
+    elapsed_us = (time.time() - start_time) * 1_000_000
+    elapsed_s  = elapsed_us / 1_000_000
+    print(f"Elapsed time: {elapsed_us:.6f} μs ({elapsed_s:.6f} s)")
 
 
 def get_basis_gto(r_cut, n_max, l_max):
@@ -126,6 +133,45 @@ def precompute_E_lb(alpha_bl, sigma):
     E_lb = -alpha_bl / denom
     return E_lb
 
+@cuda.jit
+def compute_c_nlm_kernel_partial(N_p, n_max, l_max,
+                                 K_nlm, W_nlb, E_lb, xi_lmk,
+                                 x_p, y_p, z_p,
+                                 c_partial_real, c_partial_imag):
+    tid = cuda.grid(1)
+    if tid >= N_p:
+        return
+
+    xp = x_p[tid]
+    yp = y_p[tid]
+    zp = z_p[tid]
+    R2 = xp*xp + yp*yp + zp*zp
+    xy = complex(xp, yp)
+
+    for n in range(n_max):
+        for l in range(l_max+1):
+            for m in range(l+1):
+                temp_sum = 0.0 + 0.0j
+
+                for b in range(W_nlb.shape[2]):
+                    w = W_nlb[n, l, b]
+                    e = E_lb[l, b]
+                    exp_factor = math.exp(e * R2)
+
+                    sum_k = 0.0 + 0.0j
+                    for k in range(m, l+1):
+                        xi = xi_lmk[l, m, k]
+                        z_term = zp**(k-m)
+                        R_term = R2**((l-k)/2)
+                        sum_k += xi * z_term * R_term
+
+                    temp_sum += w * exp_factor * (xy**m) * sum_k
+
+                val = temp_sum * K_nlm[n, l, m]
+
+                c_partial_real[tid, n, l, m] = val.real
+                c_partial_imag[tid, n, l, m] = val.imag
+
 def main():
     r_cut = 50
     n_max = 2
@@ -142,6 +188,7 @@ def main():
 
     atoms = read('random_hydrogens.xyz')
     positions = atoms.positions
+    N_p = len(positions)
     x_p, y_p, z_p = positions[:,0], positions[:,1], positions[:,2]
 
     print(f"N_p = {len(positions)}")
@@ -155,18 +202,38 @@ def main():
     e_lb = precompute_E_lb(alpha_bl, sigma)
     print(f"E_lb = {e_lb.shape}")
 
-    c_arr = np.zeros((n_max, l_max+1, l_max+1), dtype=complex)
-    c = []
+
+    xi_lmk_dev   = cuda.to_device(np.ascontiguousarray(xi_lmk_table))
+    K_nlm_dev    = cuda.to_device(np.ascontiguousarray(k_nlm))
+    W_nlb_dev    = cuda.to_device(np.ascontiguousarray(w_nlb))
+    E_lb_dev     = cuda.to_device(np.ascontiguousarray(e_lb))
+    x_p_dev      = cuda.to_device(np.ascontiguousarray(x_p))
+    y_p_dev      = cuda.to_device(np.ascontiguousarray(y_p))
+    z_p_dev      = cuda.to_device(np.ascontiguousarray(z_p))
+
+    threads_per_block = 512
+    blocks_per_grid = (N_p + threads_per_block - 1) // threads_per_block
+
+    num_threads = threads_per_block * blocks_per_grid
+    c_partial_real_dev = cuda.device_array((num_threads, n_max, l_max+1, l_max+1), dtype=np.float64)
+    c_partial_imag_dev = cuda.device_array((num_threads, n_max, l_max+1, l_max+1), dtype=np.float64)
+
+    cuda.profile_start()
 
     tic()
-    for nn in range(n_max):
-        c.append([])
-        for ln in range(l_max+1):
-            c[nn].append([])
-            for mn in range(ln + 1):
-                c_val = compute_c_nlm(nn, ln, mn, k_nlm, x_p, y_p, z_p, sigma)
-                c_arr[nn, ln, mn] = c_val
-                c[nn][ln].append(c_val)
+
+    compute_c_nlm_kernel_partial[blocks_per_grid, threads_per_block](
+        N_p, n_max, l_max,
+        K_nlm_dev, W_nlb_dev, E_lb_dev, xi_lmk_dev,
+        x_p_dev, y_p_dev, z_p_dev,
+        c_partial_real_dev, c_partial_imag_dev
+    )
+
+    c_partial_real = c_partial_real_dev.copy_to_host()
+    c_partial_imag = c_partial_imag_dev.copy_to_host()
+
+    c_arr = np.sum(c_partial_real, axis=0) + 1j * np.sum(c_partial_imag, axis=0)
     toc()
+    cuda.profile_stop()
 
 main()
