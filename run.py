@@ -68,27 +68,6 @@ def precompute_xi_lmk(l_max):
                     xi[l, m, k] = num / den
     return xi
 
-# C_nlm = K_lm 
-#   \Sigma_b W_nlb 
-#   \Sigma_p exp( E_lb * R^2 )
-#      (x_p + iy_p)^m \Sigma_{k=m}^l 
-#         Xi_lmk z^{k-m}_p R^{l-k}_p
-
-def compute_c_nlm(n, 
-    l, m,
-    K_nlm,
-    E_nlm,
-    R2,
-    xy_pow,
-    R_pow,
-    z_pow,
-    xi_lmk
-):
-    ...
-
-def mathcalK(p, x, y, z, n, l, m, E, R_pow, xi_lmk):
-    ...
-
 def precompute_W_nlb(alpha_bl, beta_lnb, sigma):
     denom = (1.0 + 2.0 * alpha_bl * sigma * sigma) ** 1.5
     return (beta_lnb / denom[:, None, :]).transpose(1, 0, 2)
@@ -148,6 +127,11 @@ kernel_sig = (
     float32[:, :, :, :]            # c_partial_imag
 )
 
+# C_nlm = K_lm 
+#   \Sigma_b W_nlb 
+#   \Sigma_p exp( E_lb * R^2 )
+#      (x_p + iy_p)^m \Sigma_{k=m}^l 
+#         Xi_lmk z^{k-m}_p R^{l-k}_p
 @cuda.jit(kernel_sig)
 def compute_c_nlm_kernel(N_p, n_max, l_max,
                          K_nlm, W_nlb, E_lb, xi_lmk,
@@ -161,7 +145,6 @@ def compute_c_nlm_kernel(N_p, n_max, l_max,
     temp_sum = np.complex64(0.0)
 
     for p in range(tid, N_p, stride):
-
         xp = x_p[p]
         yp = y_p[p]
         zp = z_p[p]
@@ -180,7 +163,6 @@ def compute_c_nlm_kernel(N_p, n_max, l_max,
                         xy_m *= xy
 
                     for b in range(W_nlb.shape[2]):
-
                         w = W_nlb[n, l, b]
                         e = E_lb[l, b]
                         exp_factor = math.exp(e * R2)
@@ -192,7 +174,7 @@ def compute_c_nlm_kernel(N_p, n_max, l_max,
                             xi = xi_lmk[l, m, k]
 
                             z_term = zp ** (k - m)
-                            R_term = R2 ** ((l - k) * 0.5)
+                            R_term = math.sqrt(R2) ** (l - k)
 
                             sum_k += np.complex64(xi * z_term * R_term)
 
