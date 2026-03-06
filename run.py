@@ -190,6 +190,8 @@ def main():
     l_max = 3
     sigma = 1
 
+    compute_c_nlm_kernel.compile(kernel_sig)
+
     xi_lmk_table = cache_load_or_compute(
         "xi_lmk", precompute_xi_lmk, l_max
     )
@@ -225,17 +227,22 @@ def main():
     )
     print(f"E_lb = {e_lb.shape}")
 
-    R2_buffer = np.sum(positions**2, axis=1).astype(np.float32)
+    def pinned_to_device(array, stream):
+        pinned = cuda.pinned_array(array.shape, dtype=array.dtype)
+        pinned[:] = array
+        return cuda.to_device(pinned, stream=stream)
 
-    # Transfer to GPU
-    xi_lmk_dev = cuda.to_device(np.ascontiguousarray(xi_lmk_table))
-    W_nlb_dev  = cuda.to_device(np.ascontiguousarray(w_nlb))
-    E_lb_dev   = cuda.to_device(np.ascontiguousarray(e_lb))
+    stream = cuda.stream()
 
-    x_p_dev      = cuda.to_device(np.ascontiguousarray(x_p))
-    y_p_dev      = cuda.to_device(np.ascontiguousarray(y_p))
-    z_p_dev      = cuda.to_device(np.ascontiguousarray(z_p))
-    R2_dev = cuda.to_device(R2_buffer)
+    tic()
+
+    xi_lmk_dev = pinned_to_device(xi_lmk_table, stream)
+    W_nlb_dev  = pinned_to_device(w_nlb, stream)
+    E_lb_dev   = pinned_to_device(e_lb, stream)
+
+    x_p_dev = pinned_to_device(x_p, stream)
+    y_p_dev = pinned_to_device(y_p, stream)
+    z_p_dev = pinned_to_device(z_p, stream)
 
     device = cuda.get_current_device()
 
@@ -244,31 +251,26 @@ def main():
 
     num_threads = threads_per_block * blocks_per_grid
 
-    c_partial_real_dev = cuda.device_array(
+    c_partial_real_dev = cuda.pinned_array(
         (num_threads, n_max, l_max+1, l_max+1), dtype=np.float32
     )
 
-    c_partial_imag_dev = cuda.device_array(
+    c_partial_imag_dev = cuda.pinned_array(
         (num_threads, n_max, l_max+1, l_max+1), dtype=np.float32
     )
 
     cuda.profile_start()
-
-    compute_c_nlm_kernel.compile(kernel_sig)
-
-    tic()
 
     compute_c_nlm_kernel[blocks_per_grid, threads_per_block](
         N_p, n_max, l_max, W_nlb_dev, E_lb_dev, xi_lmk_dev,
         x_p_dev, y_p_dev, z_p_dev,
         c_partial_real_dev, c_partial_imag_dev
     )
+    cuda.synchronize()
 
-    c_partial_real = c_partial_real_dev.copy_to_host()
-    c_partial_imag = c_partial_imag_dev.copy_to_host()
-
-    c_arr = k_nlm * (np.sum(c_partial_real, axis=0) + 1j * np.sum(c_partial_imag, axis=0))
+    c_arr = k_nlm * (np.sum(c_partial_real_dev, axis=0) + 1j * np.sum(c_partial_imag_dev, axis=0))
     toc()
+
     cuda.profile_stop()
 
     print(c_arr.shape)
