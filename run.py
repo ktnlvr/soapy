@@ -240,9 +240,9 @@ def main():
     W_nlb_dev  = pinned_to_device(w_nlb, stream)
     E_lb_dev   = pinned_to_device(e_lb, stream)
 
-    x_p_dev = pinned_to_device(x_p, stream)
-    y_p_dev = pinned_to_device(y_p, stream)
-    z_p_dev = pinned_to_device(z_p, stream)
+    x_p_dev = cuda.to_device(np.ascontiguousarray(x_p), stream=stream)
+    y_p_dev = cuda.to_device(np.ascontiguousarray(y_p), stream=stream)
+    z_p_dev = cuda.to_device(np.ascontiguousarray(z_p), stream=stream)
 
     device = cuda.get_current_device()
 
@@ -251,13 +251,15 @@ def main():
 
     num_threads = threads_per_block * blocks_per_grid
 
-    c_partial_real_dev = cuda.pinned_array(
+    c_partial_real_host = cuda.pinned_array(
         (num_threads, n_max, l_max+1, l_max+1), dtype=np.float32
     )
+    c_partial_real_dev = cuda.to_device(c_partial_real_host, stream=stream)
 
-    c_partial_imag_dev = cuda.pinned_array(
+    c_partial_imag_host = cuda.pinned_array(
         (num_threads, n_max, l_max+1, l_max+1), dtype=np.float32
     )
+    c_partial_imag_dev = cuda.to_device(c_partial_imag_host, stream=stream)
 
     cuda.profile_start()
 
