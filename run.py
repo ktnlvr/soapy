@@ -9,7 +9,7 @@ from ase.io import read
 from scipy.special import gamma
 from scipy.linalg import sqrtm, inv
 
-from caching import cache_load_or_compute
+from caching import cache_load_or_compute, cached_read_xyz
 
 import time
 
@@ -204,7 +204,7 @@ def main():
     print(f"A_bl = {alpha_bl.shape}")
     print(f"B_lnb = {beta_lnb.shape}")
 
-    atoms = read('random_hydrogens.xyz')
+    atoms = cached_read_xyz('random_hydrogens.xyz')
     positions = atoms.positions
     N_p = len(positions)
     x_p, y_p, z_p = positions[:,0], positions[:,1], positions[:,2]
