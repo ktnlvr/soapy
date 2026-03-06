@@ -133,7 +133,7 @@ kernel_sig = (
 #   \Sigma_p exp( E_lb * R^2 )
 #      (x_p + iy_p)^m \Sigma_{k=m}^l 
 #         Xi_lmk z^{k-m}_p R^{l-k}_p
-@cuda.jit(kernel_sig)
+@cuda.jit(kernel_sig, cache=True)
 def compute_c_nlm_kernel(N_p, n_max, l_max,
                          W_nlb, E_lb, xi_lmk,
                          x_p, y_p, z_p,
