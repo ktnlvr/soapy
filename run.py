@@ -198,7 +198,7 @@ def main():
     print(f"Xi_lmk = {xi_lmk_table.shape}")
 
     alpha_bl, beta_lnb = cache_load_or_compute(
-        "xi_lmk", get_basis_gto, r_cut, n_max, l_max
+        "alpha_bl-beta_lnb", get_basis_gto, r_cut, n_max, l_max
     )
 
     print(f"A_bl = {alpha_bl.shape}")
@@ -212,7 +212,7 @@ def main():
     print(f"N_p = {len(positions)}")
 
     k_nlm = cache_load_or_compute(
-        "xi_lmk", precompute_K_nlm, alpha_bl, beta_lnb, sigma
+        "k_nlm", precompute_K_nlm, alpha_bl, beta_lnb, sigma
     )
 
     print(f"K_nlm = {k_nlm.shape}")
