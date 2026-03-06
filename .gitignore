@@ -4,3 +4,4 @@
 *.nsys-rep
 __pycache__/
 benchmark_results.png
+*.csv
