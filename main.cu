@@ -187,7 +187,7 @@ double *precompute_E_lb(const double *alpha_bl, int l_max, int n_max,
 }
 
 static cudaEvent_t start, stop;
-static  cudaStream_t compute_stream;
+static cudaStream_t compute_stream;
 
 void *cuda_init_thread(void *arg) {
   cudaError_t err = cudaFree(0);
@@ -195,7 +195,7 @@ void *cuda_init_thread(void *arg) {
     fprintf(stderr, "CUDA initialization failed: %s\n",
             cudaGetErrorString(err));
   }
-  
+
   cudaDeviceSynchronize();
   cudaEventCreate(&start);
   cudaStreamCreate(&compute_stream);
@@ -265,17 +265,17 @@ int main(void) {
   double *d_y_out = xyz_dev + N_p;
   double *d_z_out = xyz_dev + 2 * N_p;
 
-  cudaMemcpyAsync(d_alpha, alpha_bl, size_alpha * sizeof(double),
+  cudaMemcpyToSymbolAsync(d_alpha, alpha_bl, size_alpha * sizeof(double),
+                          0, cudaMemcpyHostToDevice, transfer_stream);
+  cudaMemcpyToSymbolAsync(d_beta, beta_lnb, size_beta * sizeof(double), 0,
                   cudaMemcpyHostToDevice, transfer_stream);
-  cudaMemcpyAsync(d_beta, beta_lnb, size_beta * sizeof(double),
+  cudaMemcpyToSymbolAsync(d_K, K, size_K * sizeof(double), 0,
                   cudaMemcpyHostToDevice, transfer_stream);
-  cudaMemcpyAsync(d_K, K, size_K * sizeof(double), cudaMemcpyHostToDevice,
-                  transfer_stream);
-  cudaMemcpyAsync(d_E, E, size_E * sizeof(double), cudaMemcpyHostToDevice,
-                  transfer_stream);
-  cudaMemcpyAsync(d_W, W, size_W * sizeof(double), cudaMemcpyHostToDevice,
-                  transfer_stream);
-  cudaMemcpyAsync(d_xi, xi_lmk_cpu, size_xi * sizeof(double),
+  cudaMemcpyToSymbolAsync(d_E, E, size_E * sizeof(double), 0,
+                  cudaMemcpyHostToDevice, transfer_stream);
+  cudaMemcpyToSymbolAsync(d_W, W, size_W * sizeof(double), 0,
+                  cudaMemcpyHostToDevice, transfer_stream);
+  cudaMemcpyToSymbolAsync(d_xi, xi_lmk_cpu, size_xi * sizeof(double), 0,
                   cudaMemcpyHostToDevice, transfer_stream);
 
   cudaMemcpyAsync(d_x_out, x_out, N_p * sizeof(double), cudaMemcpyHostToDevice,
@@ -296,7 +296,6 @@ int main(void) {
   cudaStreamSynchronize(transfer_stream);
 
   cudaEventCreate(&stop);
-
 
   int threads = 256;
   int blocks = (N_p + threads - 1) / threads;
