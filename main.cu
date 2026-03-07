@@ -2,6 +2,7 @@
 #include <gsl/gsl_matrix.h>
 #include <math.h>
 #include <stdlib.h>
+#include <cuda_runtime.h>
 
 #include "include/matrix.h"
 #include "include/xyz.h"
@@ -43,12 +44,12 @@ void get_basis_gto(double r_cut, int n_max, int l_max, double **alphas_full_out,
 
   int L = l_max + 1;
 
-  double *alphas_full = malloc(L * n_max * sizeof(double));
-  double *betas_full = malloc(L * n_max * n_max * sizeof(double));
+  double *alphas_full = (double*)malloc(L * n_max * sizeof(double));
+  double *betas_full = (double*)malloc(L * n_max * n_max * sizeof(double));
 
   for (int l = 0; l <= l_max; l++) {
-    double *a = malloc(n_max * sizeof(double));
-    double *alphas = malloc(n_max * sizeof(double));
+    double *a = (double*)malloc(n_max * sizeof(double));
+    double *alphas = (double*)malloc(n_max * sizeof(double));
 
     for (int i = 0; i < n_max; i++)
       a[i] = 1.0 + (r_cut - 1.0) * i / (n_max - 1);
@@ -103,7 +104,7 @@ double *precompute_K_nlm(const double *alpha_bl, const double *beta_lnb,
                          int n_max, int l_max, double sigma) {
   int L = l_max + 1;
 
-  double *K_nlm = malloc(n_max * L * L * sizeof(double));
+  double *K_nlm = (double*)malloc(n_max * L * L * sizeof(double));
 
   for (int l = 0; l <= l_max; l++) {
     double pow_2_l = pow(2.0, l);
@@ -139,55 +140,52 @@ double *precompute_K_nlm(const double *alpha_bl, const double *beta_lnb,
   return K_nlm;
 }
 
-double *precompute_W_nlb(const double *alpha_bl,
-                         const double *beta_lnb,
-                         int l_max,
-                         int n_max,
-                         double sigma)
-{
-    int L = l_max + 1;
-    double *W_nlb = malloc(n_max * L * n_max * sizeof(double));
-    if (!W_nlb) return NULL;
+double *precompute_W_nlb(const double *alpha_bl, const double *beta_lnb,
+                         int l_max, int n_max, double sigma) {
+  int L = l_max + 1;
+  double *W_nlb = (double*)malloc(n_max * L * n_max * sizeof(double));
+  if (!W_nlb)
+    return NULL;
 
-    for (int l = 0; l <= l_max; l++) {
-        for (int n = 0; n < n_max; n++) {
-            for (int b = 0; b < n_max; b++) {
+  for (int l = 0; l <= l_max; l++) {
+    for (int n = 0; n < n_max; n++) {
+      for (int b = 0; b < n_max; b++) {
 
-                double ab = alpha_bl[index_alpha_bl(l, b, n_max)];
-                double denom = pow(1.0 + 2.0 * ab * sigma * sigma, 1.5);
+        double ab = alpha_bl[index_alpha_bl(l, b, n_max)];
+        double denom = pow(1.0 + 2.0 * ab * sigma * sigma, 1.5);
 
-                double bb = beta_lnb[index_beta_lnb(l, n, b, n_max)];
+        double bb = beta_lnb[index_beta_lnb(l, n, b, n_max)];
 
-                W_nlb[n*L*n_max + l*n_max + b] = bb / denom;
-            }
-        }
+        W_nlb[n * L * n_max + l * n_max + b] = bb / denom;
+      }
     }
+  }
 
-    return W_nlb;
+  return W_nlb;
 }
 
-double *precompute_E_lb(const double *alpha_bl,
-                        int l_max,
-                        int n_max,
-                        double sigma)
-{
-    int L = l_max + 1;
-    double *E_lb = malloc(L * n_max * sizeof(double));
-    if (!E_lb)
-        return NULL;
+double *precompute_E_lb(const double *alpha_bl, int l_max, int n_max,
+                        double sigma) {
+  int L = l_max + 1;
+  double *E_lb = (double*)malloc(L * n_max * sizeof(double));
+  if (!E_lb)
+    return NULL;
 
-    for (int l = 0; l <= l_max; l++) {
-        for (int b = 0; b < n_max; b++) {
-            double ab = alpha_bl[index_alpha_bl(l, b, n_max)];
-            double denom = 1.0 + 2.0 * ab * sigma * sigma;
-            E_lb[index_alpha_bl(l, b, n_max)] = -ab / denom;
-        }
+  for (int l = 0; l <= l_max; l++) {
+    for (int b = 0; b < n_max; b++) {
+      double ab = alpha_bl[index_alpha_bl(l, b, n_max)];
+      double denom = 1.0 + 2.0 * ab * sigma * sigma;
+      E_lb[index_alpha_bl(l, b, n_max)] = -ab / denom;
     }
+  }
 
-    return E_lb;
+  return E_lb;
 }
 
 int main(void) {
+  // Initialise lazy cuda context
+  cudaFree(0);
+
   int r_cut = 50;
   int n_max = 2;
   int l_max = 3;
@@ -220,6 +218,26 @@ int main(void) {
   double *K = precompute_K_nlm(alpha_bl, beta_lnb, n_max, l_max, sigma);
   double *E = precompute_E_lb(alpha_bl, l_max, n_max, sigma);
   double *W = precompute_W_nlb(alpha_bl, beta_lnb, l_max, n_max, sigma);
+
+  double *d_alpha_bl, *d_beta_lnb, *d_E_lb, *d_K_nlm;
+
+  int L = l_max + 1;
+
+  size_t size_alpha = L * n_max;           // alpha_bl[l,b]
+  size_t size_beta  = L * n_max * n_max;   // beta_lnb[l,n,b]
+  size_t size_K     = n_max * L * L;       // K_nlm[n,l,m]
+  size_t size_E     = L * n_max;           // E_lb[l,b]
+  size_t size_W     = n_max * L * n_max;   // W_nlb[n,l,b]
+  size_t total_size = (size_alpha + size_beta + size_K + size_E + size_W) * sizeof(double);
+
+  double *d_mem;
+  cudaMalloc(&d_mem, total_size);
+
+  double *d_alpha = d_mem;
+  double *d_beta  = d_alpha + (l_max+1)*n_max;
+  double *d_K = d_beta + (l_max+1)*n_max*n_max;
+  double *d_E = d_K + n_max*(l_max+1)*(l_max+1); 
+  double *d_W = d_E + (l_max+1)*n_max;
 
   return 0;
 }

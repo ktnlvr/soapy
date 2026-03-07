@@ -18,9 +18,9 @@ int read_xyz_coords(const char *filename,
         return 2;
     }
 
-    double *x = malloc(n_atoms * sizeof(double));
-    double *y = malloc(n_atoms * sizeof(double));
-    double *z = malloc(n_atoms * sizeof(double));
+    double *x = (double*)malloc(n_atoms * sizeof(double));
+    double *y = (double*)malloc(n_atoms * sizeof(double));
+    double *z = (double*)malloc(n_atoms * sizeof(double));
 
     if (!x || !y || !z) {
         free(x);
