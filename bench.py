@@ -8,14 +8,14 @@ import csv
 
 WARMUP_RUNS = 2
 BENCH_RUNS = 10
-MAX_POWER = 8
+MAX_POWER = 7
 
 # regex to extract elapsed time in μs
 elapsed_regex = re.compile(r"Elapsed time: ([0-9.]+) μs")
 
-def run_script(script):
+def run_script(*cmd):
     """Run a script and return elapsed time (from output) in seconds"""
-    result = subprocess.run(["python3", script], capture_output=True, text=True)
+    result = subprocess.run(cmd, capture_output=True, text=True)
     out = result.stdout
     match = elapsed_regex.search(out)
     elapsed = float(match.group(1)) * 1e-6 if match else None  # μs → s
@@ -35,7 +35,7 @@ def benchmark(script_name, powers):
         subprocess.run(["python3", "generate.py", str(n)], capture_output=True)
         print(f"Warmup runs ({WARMUP_RUNS})...")
         for i in range(WARMUP_RUNS):
-            elapsed, _ = run_script(script_name)
+            elapsed, _ = run_script(*script_name)
             print(f"  Warmup run {i+1} done, elapsed = {elapsed*1e6:.2f} μs" if elapsed else f"  Warmup run {i+1} done")
 
         # Benchmark runs
@@ -45,7 +45,7 @@ def benchmark(script_name, powers):
         for i in range(BENCH_RUNS):
             subprocess.run(["python3", "generate.py", str(n)], capture_output=True)
             start = time.time()
-            elapsed, _ = run_script(script_name)
+            elapsed, _ = run_script(*script_name)
             end = time.time()
             total_list.append(end - start)
             if elapsed is not None:
@@ -61,10 +61,10 @@ def benchmark(script_name, powers):
 powers = list(range(0, MAX_POWER+1))
 
 # Benchmark run.py
-run_total, run_elapsed, run_raw = benchmark("run.py", powers)
+run_total, run_elapsed, run_raw = benchmark(["./build/main"], powers)
 
 # Benchmark target_implementation.py
-target_total, target_elapsed, target_raw = benchmark("target_implementation.py", powers)
+target_total, target_elapsed, target_raw = benchmark(["python3", "target_implementation.py"], powers)
 
 # Convert to arrays for plotting
 def unpack(tuples):
