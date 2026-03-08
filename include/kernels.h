@@ -4,7 +4,7 @@
 #include <stdio.h>
 
 __host__ __device__ int W_idx(int l_max, int n_max, int n, int l, int b) {
-    return n*(l_max+1)*n_max + l*n_max + b;
+    return b*(l_max+1)*n_max + l*n_max + n;
 }
 
 __host__ __device__ int E_idx(int n_max, int l, int b) {
@@ -15,8 +15,9 @@ __host__ __device__ int xi_idx(int l_max, int l, int m, int k) {
     return l*(l_max+1)*(l_max+1) + m*(l_max+1) + k;
 }
 
+// TODO: pass in the thread count
 __host__ __device__ int c_idx(int tid, int n_max, int l_max, int n, int l, int m) {
-    return tid*n_max*(l_max+1)*(l_max+1) + n*(l_max+1)*(l_max+1) + l*(l_max+1) + m;
+    return n*(l_max+1)*(l_max+1)*256 + l*(l_max+1)*256 + m*256 + tid;
 }
 
 __global__ void compute_c_nlm_kernel(
