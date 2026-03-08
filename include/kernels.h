@@ -34,12 +34,13 @@ __global__ void compute_c_nlm_kernel(
         float zp = z_p[p];
 
         float R2 = xp*xp + yp*yp + zp*zp;
+        float R = sqrtf(R2);
+
         float2 xy = make_float2(xp, yp);
 
         for (int n = 0; n < n_max; n++) {
             for (int l = 0; l <= l_max; l++) {
                 for (int m = 0; m <= l; m++) {
-
                     float2 temp_sum = make_float2(0.0f, 0.0f);
 
                     float2 xy_m = make_float2(1.0f, 0.0f);
@@ -58,8 +59,13 @@ __global__ void compute_c_nlm_kernel(
 
                         for (int k = m; k <= l; k++) {
                             float xi = xi_lmk[xi_idx(l_max, l,m,k)];
-                            float z_term = powf(zp, k - m);
-                            float R_term = powf(sqrtf(R2), l - k);
+                            float z_term = 1;
+                            for (int i = 0; i < k - m; i++)
+                                z_term *= zp;
+
+                            float R_term = 1;
+                            for (int i = 0; i < l - k; i++)
+                                R_term *= R;
 
                             float factor = xi * z_term * R_term;
                             sum_k.x += factor;
