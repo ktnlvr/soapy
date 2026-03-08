@@ -2,9 +2,9 @@
 #include <stdlib.h>
 
 int read_xyz_coords(const char *filename,
-                    double **x_out,
-                    double **y_out,
-                    double **z_out,
+                    float **x_out,
+                    float **y_out,
+                    float **z_out,
                     int *n_atoms_out)
 {
     FILE *f = fopen(filename, "r");
@@ -18,9 +18,9 @@ int read_xyz_coords(const char *filename,
         return 2;
     }
 
-    double *x = (double*)malloc(n_atoms * sizeof(double));
-    double *y = (double*)malloc(n_atoms * sizeof(double));
-    double *z = (double*)malloc(n_atoms * sizeof(double));
+    float *x = (float*)malloc(n_atoms * sizeof(float));
+    float *y = (float*)malloc(n_atoms * sizeof(float));
+    float *z = (float*)malloc(n_atoms * sizeof(float));
 
     if (!x || !y || !z) {
         free(x);
@@ -33,7 +33,7 @@ int read_xyz_coords(const char *filename,
     char label[64];
 
     for (int i = 0; i < n_atoms; i++) {
-        if (fscanf(f, "%63s %lf %lf %lf", label, &x[i], &y[i], &z[i]) != 4) {
+        if (fscanf(f, "%63s %f %f %f", label, &x[i], &y[i], &z[i]) != 4) {
             free(x);
             free(y);
             free(z);

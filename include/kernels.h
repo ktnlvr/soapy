@@ -22,9 +22,9 @@ __host__ __device__ int c_idx(int tid, int n_max, int l_max, int n, int l, int m
 
 __global__ void compute_c_nlm_kernel(
     int N_p, int n_max, int l_max,
-    const double *W_nlb, const double *E_lb, const double *xi_lmk,
-    const double *x_p, const double *y_p, const double *z_p,
-    double *c_partial_real, double *c_partial_imag)
+    const float *W_nlb, const float *E_lb, const float *xi_lmk,
+    const float *x_p, const float *y_p, const float *z_p,
+    float *c_partial_real, float *c_partial_imag)
 {
     int tid = blockIdx.x * blockDim.x + threadIdx.x;
     int stride = blockDim.x * gridDim.x;
