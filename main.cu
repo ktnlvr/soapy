@@ -225,7 +225,7 @@ int main(void) {
     size_t total_size = (size_alpha + size_beta + size_K + size_E + size_W + size_xi) * sizeof(float);
 
     float *d_mem;
-    cudaMalloc(&d_mem, total_size);
+    cudaMallocAsync(&d_mem, total_size, transfer_stream);
     float *d_alpha = d_mem;
     float *d_beta  = d_alpha + size_alpha;
     float *d_K     = d_beta + size_beta;
@@ -234,7 +234,7 @@ int main(void) {
     float *d_xi    = d_W + size_W;
 
     float *xyz_dev;
-    cudaMalloc(&xyz_dev, 3 * N_p * sizeof(float));
+    cudaMallocAsync(&xyz_dev, 3 * N_p * sizeof(float), transfer_stream);
     float *d_x_out = xyz_dev;
     float *d_y_out = xyz_dev + N_p;
     float *d_z_out = xyz_dev + 2 * N_p;
@@ -252,8 +252,8 @@ int main(void) {
 
     size_t size_c = N_p * n_max * L * L * sizeof(float);
     float *d_c_real, *d_c_imag;
-    cudaMalloc(&d_c_real, size_c);
-    cudaMalloc(&d_c_imag, size_c);
+    cudaMallocAsync(&d_c_real, size_c, transfer_stream);
+    cudaMallocAsync(&d_c_imag, size_c, transfer_stream);
 
     float *c_real_host = (float *)malloc(size_c);
     float *c_imag_host = (float *)malloc(size_c);
